@@ -1,0 +1,47 @@
+#!/bin/bash
+#
+#  Start Permascape — launcher STUB. All the real logic lives in
+#     scripts/start-permascape.sh
+#  which is a plain file outside the bundle. Edit that, not this.
+#
+#  The project sits under ~/Desktop, which macOS privacy (TCC) protects: this
+#  bundle is usually refused any read there, silently. So when it cannot read
+#  the logic script it asks Terminal to OPEN a small .command file instead.
+#  Opening a file needs no permission of any kind (unlike telling Terminal to
+#  "do script", which needs an Automation grant this bundle never got,
+#  permission, runs the logic, and the logic closes that window itself.
+#
+set -u
+
+SELF="$(cd "$(dirname "$0")" && pwd)"      # .../Start Permascape.app/Contents/MacOS
+ROOT="$(cd "$SELF/../../.." && pwd)"       # the Permascape 3D project folder
+LOGIC="$ROOT/scripts/start-permascape.sh"
+
+# Logs and the handoff file live in ~/Library, which is never protected.
+LOGDIR="$HOME/Library/Logs/Permascape3D"
+HANDDIR="$HOME/Library/Application Support/Project Launchers"
+mkdir -p "$LOGDIR" "$HANDDIR" 2>/dev/null
+LOG="$LOGDIR/launcher.log"
+say() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] stub: $*" >> "$LOG" 2>/dev/null; }
+die() {
+  say "FAILED: $1"
+  /usr/bin/osascript -e 'activate' -e "display dialog \"$1\" with title \"Start Permascape\" buttons {\"OK\"} default button 1 with icon caution" >/dev/null 2>&1
+  exit 1
+}
+
+say "--- click --- root: $ROOT"
+
+# stat() survives a privacy denial, reading does not.
+[ -e "$LOGIC" ] || die "Can't find the launcher script.\n\nExpected: $LOGIC\n\nKeep 'Start Permascape' in the top level of the Permascape 3D folder."
+
+if /bin/cat "$LOGIC" >/dev/null 2>&1; then
+  say "readable — running directly"
+  exec /bin/bash "$LOGIC"
+fi
+
+say "blocked by privacy (TCC) — handing a .command file to Terminal"
+CMDF="$HANDDIR/Start Permascape.command"
+printf '#!/bin/bash\nexec /bin/bash %q --via-terminal\n' "$LOGIC" > "$CMDF" || die "Could not write $CMDF"
+chmod +x "$CMDF"
+/usr/bin/open -g -a Terminal "$CMDF" || die "Could not open Terminal.\n\nOpen Terminal yourself and run:\n\nbash '$LOGIC'"
+exit 0
