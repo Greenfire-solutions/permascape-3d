@@ -43,5 +43,9 @@ say "blocked by privacy (TCC) — handing a .command file to Terminal"
 CMDF="$HANDDIR/Start Permascape.command"
 printf '#!/bin/bash\nexec /bin/bash %q --via-terminal\n' "$LOGIC" > "$CMDF" || die "Could not write $CMDF"
 chmod +x "$CMDF"
+# First without Terminal: launchd starts node, which may read the Desktop. A
+# frozen Terminal made every icon do nothing (2026-10-26). Terminal is the backup.
+NT="$HANDDIR/no-terminal.sh"
+[ -x "$NT" ] && /bin/bash "$NT" "$LOGIC" "$LOG" && exit 0
 /usr/bin/open -g -a Terminal "$CMDF" || die "Could not open Terminal.\n\nOpen Terminal yourself and run:\n\nbash '$LOGIC'"
 exit 0
