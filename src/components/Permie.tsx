@@ -22,10 +22,12 @@ interface Props {
   onUpdateTurn: (id: string, patch: Partial<AiTurn>) => void;
   /** the rule checks run on a proposal as if it were added: plant conflicts, flood, streams, slope */
   checkActions: (actions: AiAction[]) => string[];
+  /** the app measures buildings and swales on the real terrain and moves any on steep ground */
+  settle?: (actions: AiAction[]) => { actions: AiAction[]; notes: string[] };
   start?: { mode: 'design' | 'ask'; question?: string; auto?: boolean } | null;
 }
 
-export default function Permie({ available, turns, goals, onGoals, buildContext, onTurn, onApply, onPreview, onClose, onUpdateTurn, checkActions, start }: Props) {
+export default function Permie({ available, turns, goals, onGoals, buildContext, onTurn, onApply, onPreview, onClose, onUpdateTurn, checkActions, settle, start }: Props) {
   const [mode, setMode] = useState<'design' | 'ask'>(start?.mode ?? (turns.length ? 'ask' : 'design'));
   const [text, setText] = useState(start?.question ?? '');
   const [compact, setCompact] = useState(false);
@@ -52,12 +54,14 @@ export default function Permie({ available, turns, goals, onGoals, buildContext,
       const r = await askPermie({ mode: 'critic', question: q + found, context: buildContext(), proposal: turn.actions, model: deep ? 'opus' : 'sonnet' });
       const drop = new Set(r.drop || []);
       const added = (r.actions || []) as AiAction[];
-      const actions = [...turn.actions.filter((_, i) => !drop.has(i)), ...added];
-      onUpdateTurn(turn.id, { actions, critique: { answer: r.answer, dropped: [...drop], added: added.length, seconds: r.seconds }, checks: checkActions(actions) });
+      const s = settle ? settle([...turn.actions.filter((_, i) => !drop.has(i)), ...added]) : null;
+      const actions = s ? s.actions : [...turn.actions.filter((_, i) => !drop.has(i)), ...added];
+      onUpdateTurn(turn.id, { actions, critique: { answer: r.answer, dropped: [...drop], added: added.length, seconds: r.seconds, settled: s?.notes || [] }, checks: checkActions(actions) });
       setPicked((p) => ({ ...p, [turn.id]: new Set(actions.map((_, i) => i)) }));
       if (previewRef.current === turn.id) onPreview(actions);
     } catch (e: any) {
-      onUpdateTurn(turn.id, { critique: { answer: `The self-check did not run: ${e.message}`, dropped: [], added: 0 } });
+      const s = settle ? settle(turn.actions) : null;
+      onUpdateTurn(turn.id, { ...(s ? { actions: s.actions, checks: checkActions(s.actions) } : {}), critique: { answer: `The self-check did not run: ${e.message}`, dropped: [], added: 0, settled: s?.notes || [] } });
     }
     setChecking(null);
   };
@@ -160,6 +164,12 @@ export default function Permie({ available, turns, goals, onGoals, buildContext,
                     <div className="mx-1 mb-1.5 rounded-xl bg-emerald-400/[0.07] border border-emerald-400/20 p-2.5 text-[11.5px] text-emerald-50 whitespace-pre-wrap" data-critique>
                       <div className="flex items-center gap-1.5 font-semibold mb-0.5"><ShieldCheck size={13} className="text-emerald-300" />{checking === t.id ? <>Checking its own design<span className="animate-breathe">...</span></> : 'Permie checked its own design'}</div>
                       {t.critique?.answer}
+                      {!!t.critique?.settled?.length && (
+                        <div className="mt-2 pt-2 border-t border-emerald-300/15" data-settled>
+                          <div className="font-semibold mb-0.5">Then the app measured it on the real ground</div>
+                          {t.critique.settled.join('\n')}
+                        </div>
+                      )}
                     </div>
                   )}
                   {t.checks && t.checks.length > 0 && (

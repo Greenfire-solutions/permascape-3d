@@ -7,7 +7,7 @@ import {
 import Toolbar, { ALL_TOOLS } from './components/Toolbar';
 import Permie from './components/Permie';
 import { PlantLibrary, YearCalendar, WaterBudget, DesignReview } from './components/Workspaces';
-import { effectiveZone, buildGuild, buildHedge, keylinePattern, sunSectors, applyActions, terrainBrief, centroid, reviewDesign, guildedShare, FixId, SECTOR_STYLE, bearing, FitFn, defaultHead, homeOf } from './lib/permaculture';
+import { effectiveZone, buildGuild, buildHedge, keylinePattern, sunSectors, applyActions, terrainBrief, centroid, reviewDesign, guildedShare, FixId, SECTOR_STYLE, bearing, FitFn, defaultHead, homeOf, settleActions } from './lib/permaculture';
 import { plantChecks, sitingChecks, surroundingsBrief } from './lib/checks';
 import { estimate, isHouse, PRICE_ITEMS } from './lib/estimate';
 import { seasonWatch, WatchItem } from './lib/season';
@@ -1034,6 +1034,7 @@ export default function App() {
     const cs = [...plantChecks(r.state.objects, site), ...sitingChecks({ site, objects: r.state.objects, features: r.state.features, slopeAt: (x, y) => slopeAspectAt(g2, x, y).slope, wetAt })];
     return [...new Set(cs.filter((c) => c.ids.some((id) => fresh.has(id))).map((c) => localizeText(c.text, settings.units)))];
   };
+  const settleAi = (actions: AiAction[]) => (grid && design && site ? settleActions(grid, site, design.features, design.objects, actions) : { actions, notes: [] });
   const onAiApply = (turnId: string, idx: number[]) => {
     const t = project?.ai?.find((x) => x.id === turnId);
     if (!t || !grid || !design) return;
@@ -1272,7 +1273,7 @@ export default function App() {
           {permie && project && (
             <Permie key={permieStart ? JSON.stringify(permieStart) : 'permie'} available={aiAvailable} turns={project.ai || []} goals={project.goals || []} onGoals={(g) => { setProject((p) => (p ? { ...p, goals: g } : p)); setDirty(true); }}
               buildContext={buildAiContext} onTurn={onAiTurn} onApply={onAiApply} onPreview={setAiPreview} onClose={() => { setPermie(false); setAiPreview(null); setPermieStart(null); }}
-              onUpdateTurn={onAiUpdateTurn} checkActions={checkActions} start={permieStart} />
+              onUpdateTurn={onAiUpdateTurn} checkActions={checkActions} settle={settleAi} start={permieStart} />
           )}
         </main>
 

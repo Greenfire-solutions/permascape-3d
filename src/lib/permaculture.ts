@@ -6,9 +6,9 @@ import type { AiAction, DesignState, Feature, Site, SiteObject, Animal } from '.
 import { LIBRARY, LIBRARY_BY_ID } from './library.ts';
 import type { Species, Layer } from './library.ts';
 import type { Grid } from './terrain.ts';
-import { heightAt, contourThrough, applyEarthwork, digPond, polygonArea, polylineLength, pointInPolygon, slopeGrid } from './terrain.ts';
+import { heightAt, contourThrough, applyEarthwork, digPond, polygonArea, polylineLength, pointInPolygon, slopeGrid, slopeAspectAt } from './terrain.ts';
 import { sunPosition } from './sun.ts';
-import { plantChecks, sitingChecks, CONFLICTS } from './checks.ts';
+import { plantChecks, sitingChecks, CONFLICTS, groundProblem, lineSlope } from './checks.ts';
 import { isHouse } from './estimate.ts';
 
 /** The home the zones and sectors radiate from: the house by name, else a house-sized dwelling, else the first building. */
@@ -555,6 +555,59 @@ export function applyActions(state: DesignState, g: Grid, actions: AiAction[], i
     applied.push(i);
   }
   return { state: { heights, objects, features }, applied, notes };
+}
+
+// ---------------------------------------------------------------- the app settles the AI's placements onto real ground
+const STEEP_BUILD = 15, STEEP_SWALE = 15;
+
+/**
+ * The AI places things from a coarse picture of the land, so after it has checked its own work the app
+ * measures every building, greenhouse and swale on the real terrain. Anything on ground steeper than 15%
+ * moves to the nearest gentler spot within `maxMove` metres that is dry, clear of streams and roads, inside
+ * the property line and not on top of another building. What moved, and what found no better ground, is said in plain words.
+ */
+export function settleActions(g: Grid, site: Site, features: Feature[], objects: SiteObject[], actions: AiAction[], maxMove = 60) {
+  const half = g.size / 2 - 3;
+  const slopeAt = (x: number, y: number) => slopeAspectAt(g, x, y).slope;
+  const padSlope = (x: number, y: number) => Math.max(slopeAt(x, y), (slopeAt(x - 2, y) + slopeAt(x + 2, y) + slopeAt(x, y - 2) + slopeAt(x, y + 2)) / 4);
+  const taken: [number, number][] = objects.filter((o) => ['building', 'greenhouse', 'coop', 'tank', 'pond'].includes(o.type)).map((o) => [o.x, o.y]);
+  const isBuilt = (a: AiAction) => a.kind === 'structure' && ['building', 'shed', 'greenhouse'].includes(a.structure || '');
+  for (const a of actions) if (a.kind === 'structure' && !isBuilt(a) && a.x != null && a.y != null) taken.push([a.x, a.y]);
+  const swaleSlope = (a: AiAction, x: number, y: number) => {
+    const line = contourThrough(g, x, y, Math.max(8, Math.min(g.size * 1.5, a.size ?? 40)));
+    return line ? lineSlope(line, slopeAt) : Infinity;
+  };
+  const notes: string[] = [];
+  const out = actions.map((a) => {
+    if ((!isBuilt(a) && a.kind !== 'swale') || a.x == null || a.y == null) return a;
+    const built = isBuilt(a);
+    const limit = built ? STEEP_BUILD : STEEP_SWALE;
+    const now = built ? slopeAt(a.x, a.y) : swaleSlope(a, a.x, a.y);
+    if (now <= limit) { if (built) taken.push([a.x, a.y]); return a; }
+    const ok = (x: number, y: number) => Math.abs(x) <= half && Math.abs(y) <= half && !groundProblem(site, features, x, y) && (!built || taken.every(([tx, ty]) => Math.hypot(tx - x, ty - y) > 8));
+    let best: [number, number, number] | null = null;
+    for (let r = 3; r <= maxMove && !best; r += 3) {
+      const n = Math.max(8, Math.round((2 * Math.PI * r) / 3));
+      const ring: [number, number, number][] = [];
+      for (let k = 0; k < n; k++) {
+        const x = a.x + r * Math.cos((2 * Math.PI * k) / n), y = a.y + r * Math.sin((2 * Math.PI * k) / n);
+        if (!ok(x, y)) continue;
+        const sl = built ? padSlope(x, y) : slopeAt(x, y);
+        if (sl <= limit * 0.8) ring.push([x, y, sl]);
+      }
+      // gentlest first; a swale is only kept where its whole contour line is gentle
+      for (const c of ring.sort((p, q) => p[2] - q[2])) {
+        const sl = built ? c[2] : swaleSlope(a, c[0], c[1]);
+        if (sl <= limit) { best = [c[0], c[1], sl]; break; }
+      }
+    }
+    if (!best) { notes.push(`${a.label} stays on ${now.toFixed(0)}% ground: there is nothing gentler within ${maxMove} m. Consider terracing or dropping it.`); if (built) taken.push([a.x, a.y]); return a; }
+    if (built) taken.push([best[0], best[1]]);
+    const moved = Math.hypot(best[0] - a.x, best[1] - a.y);
+    notes.push(`Moved ${a.label} ${moved.toFixed(0)} m, from ${now.toFixed(0)}% to ${best[2].toFixed(0)}% ground.`);
+    return { ...a, x: Math.round(best[0] * 10) / 10, y: Math.round(best[1] * 10) / 10 };
+  });
+  return { actions: out, notes };
 }
 
 // ---------------------------------------------------------------- what the AI is told about the land

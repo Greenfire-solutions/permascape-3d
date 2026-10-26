@@ -193,3 +193,32 @@ test('the season watch names the tender plants before a frost and the swales bef
   assert.match(w.find((x) => /Heavy rain/.test(x.title)).text, /Upper swale/);
   assert.equal(seasonWatch([d('2026-06-01', 15, 25, 5)], [], [], [], 'metric').length, 0);
 });
+
+test('the app settles the AI\'s buildings and swales onto gentle ground, clear of the flood area, and says what it moved', () => {
+  // west half 40% slope, east half 5%; a flood area covers the first 20 m of the gentle side
+  const n = 64, size = 120, w = n + 1, h = new Float32Array(w * w);
+  for (let r = 0; r < w; r++) for (let c = 0; c < w; c++) { const x = (c / n) * size - size / 2; h[r * w + c] = ((x < 0 ? 40 : 5) / 100) * (r / n) * size; }
+  const g = { heights: h, n, size };
+  const flood = [{ zone: 'AE', sfha: true, floodway: false, label: 'Flood zone AE', ring: [[0, -60], [20, -60], [20, 60], [0, 60]] }];
+  const s = site({ size, n, surroundings: { flood } });
+  const actions = [
+    { kind: 'structure', structure: 'shed', label: 'Goat shelter', why: '', x: -15, y: 0 },
+    { kind: 'swale', label: 'Swale A', why: '', x: -15, y: 20, size: 20 },
+    { kind: 'structure', structure: 'greenhouse', label: 'Greenhouse', why: '', x: 40, y: -20 },
+    { kind: 'guild', species: 'apple', label: 'Apple guild', why: '', x: -30, y: 0 },
+  ];
+  const r = P.settleActions(g, s, [], [], actions);
+  const shelter = r.actions[0], swale = r.actions[1];
+  assert.ok(shelter.x > 20, `shelter moved past the flood area, got x=${shelter.x}`);
+  assert.ok(swale.x > 20, `swale moved past the flood area, got x=${swale.x}`);
+  assert.deepEqual(r.actions[2], actions[2], 'a greenhouse already on gentle ground stays put');
+  assert.deepEqual(r.actions[3], actions[3], 'plants are not moved');
+  assert.equal(r.notes.length, 2);
+  assert.match(r.notes[0], /^Moved Goat shelter \d+ m, from 4\d% to \d% ground\.$/);
+  assert.match(r.notes[1], /^Moved Swale A/);
+  // nothing gentle in reach: it stays, and says so
+  const steep = slope(64, 100, 40);
+  const r2 = P.settleActions(steep, site(), [], [], [actions[0]]);
+  assert.deepEqual(r2.actions[0], actions[0]);
+  assert.match(r2.notes[0], /stays on 40% ground: there is nothing gentler within 60 m/);
+});

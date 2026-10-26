@@ -360,8 +360,9 @@ const Viewport3D = forwardRef<ViewportHandle, Props>((props, ref) => {
     };
     loop();
 
-    // read-only hooks for the end-to-end test (test/e2e.mjs)
+    // read-only hooks for the end-to-end test (test/e2e.mjs); `three` lets the showcase film steer the camera
     (window as any).__psView = {
+      three: T,
       frames: () => renderer.info.render.frame,
       particles: () => waterMesh.count,
       project: (x: number, y: number) => {

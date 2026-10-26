@@ -244,7 +244,7 @@ export interface AiTurn {
   applied?: number[];
   seconds?: number;
   // the critic's pass over a design: what it flagged, which proposals it dropped, what it added
-  critique?: { answer: string; dropped: number[]; added: number; seconds?: number } | null;
+  critique?: { answer: string; dropped: number[]; added: number; seconds?: number; settled?: string[] } | null;
   checks?: string[];
 }
 

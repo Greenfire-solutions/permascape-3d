@@ -117,6 +117,24 @@ export function streamLines(site: Site): { name: string; line: [number, number][
   return (s.osm?.water || []).filter((w) => w.line && ['stream', 'river', 'canal', 'ditch', 'brook'].includes(w.kind)).map((w) => ({ name: w.name || `the ${w.kind}`, line: w.line! }));
 }
 
+/** Why a spot is no place to build or dig, or null: flood area, wetland, stream buffer, road, or outside the property line. */
+export function groundProblem(site: Site, features: Feature[], x: number, y: number): string | null {
+  const s = site.surroundings;
+  if ((s?.flood || []).some((z) => z.sfha && pointInPolygon(x, y, z.ring))) return 'flood area';
+  if ((s?.wetlands || []).some((w) => pointInPolygon(x, y, w.ring))) return 'wetland';
+  if (streamLines(site).some((st) => distanceToPolyline(x, y, st.line) < STREAM_BUFFER_M)) return 'stream buffer';
+  if ((s?.osm?.roads || []).some((r) => distanceToPolyline(x, y, r.line) < 5)) return 'road';
+  const boundary = features.find((f) => f.kind === 'boundary');
+  if (boundary && !pointInPolygon(x, y, boundary.points)) return 'outside the property line';
+  return null;
+}
+
+/** Mean slope along a line, sampled every few metres. */
+export const lineSlope = (pts: [number, number][], slopeAt: (x: number, y: number) => number) => {
+  const ps = sample(pts, 4);
+  return ps.reduce((t, p) => t + slopeAt(p[0], p[1]), 0) / Math.max(1, ps.length);
+};
+
 export function sitingChecks(d: SitingInput): Check[] {
   const out: Check[] = [];
   const proposed = (o: { status?: string }) => o.status !== 'existing';
@@ -125,8 +143,7 @@ export function sitingChecks(d: SitingInput): Check[] {
 
   // swales belong on gentle to moderate ground; on steep slopes they slump and can blow out
   if (d.slopeAt) for (const f of d.features.filter((f) => f.kind === 'swale' && proposed(f))) {
-    const pts = sample(f.points, 4);
-    const mean = pts.reduce((t, p) => t + d.slopeAt!(p[0], p[1]), 0) / Math.max(1, pts.length);
+    const mean = lineSlope(f.points, d.slopeAt);
     if (mean > 20) out.push({ level: 'warn', area: 'siting', text: `${f.name} sits on a ${mean.toFixed(0)}% slope. Swales on ground this steep slump and can blow out in a big storm. Use terraces, a narrow-based swale with a planted berm, or move it to gentler ground below.`, ids: [f.id] });
     else if (mean > 15) out.push({ level: 'tip', area: 'siting', text: `${f.name} is on a ${mean.toFixed(0)}% slope, near the upper limit for swales. Keep it small, plant the berm at once, and give it a level spillway.`, ids: [f.id] });
   }
