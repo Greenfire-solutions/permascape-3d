@@ -2,6 +2,7 @@
 // satellite photo or hillshade, the analysis overlay, contours, zones, paths and earthwork lines.
 import type { Feature, Settings } from './types';
 import { Grid, contourSegments, slopeGrid, SLOPE_CLASSES, gradientAt } from './terrain';
+import { SECTOR_STYLE, ANIMALS } from './permaculture';
 
 export const TEX = 2048;
 
@@ -163,5 +164,75 @@ export function composeMap(
     ctx.strokeStyle = f.id === selectedId ? '#ffffff' : f.kind === 'swale' ? '#38bdf8' : '#d97706';
     ctx.stroke();
     ctx.setLineDash([]);
+  }
+
+  const line = (pts: [number, number][]) => { ctx.beginPath(); pts.forEach(([x, y], i) => { const [px, py] = toPx(x, y); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); }); };
+  const label = (text: string, x: number, y: number, size = 26, fill = '#fff') => {
+    const [lx, ly] = toPx(x, y);
+    ctx.font = `600 ${size}px "Inter Variable", system-ui, sans-serif`; ctx.textAlign = 'center';
+    ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.strokeText(text, lx, ly); ctx.fillStyle = fill; ctx.fillText(text, lx, ly);
+  };
+
+  // 7. paddocks: hatched ground with the animals named
+  if (s.layers.zones) for (const f of features) {
+    if (f.kind !== 'paddock' || f.points.length < 3) continue;
+    line(f.points); ctx.closePath();
+    ctx.fillStyle = 'rgba(212,169,92,0.22)'; ctx.fill();
+    ctx.save(); ctx.clip();
+    ctx.strokeStyle = 'rgba(212,169,92,0.35)'; ctx.lineWidth = 2;
+    for (let k = -W; k < W * 2; k += 22) { ctx.beginPath(); ctx.moveTo(k, 0); ctx.lineTo(k - W, W); ctx.stroke(); }
+    ctx.restore();
+    line(f.points); ctx.closePath();
+    ctx.lineWidth = f.id === selectedId ? 6 : 3.5; ctx.strokeStyle = f.id === selectedId ? '#fff' : '#d4a95c'; ctx.stroke();
+    const cx = f.points.reduce((t, p) => t + p[0], 0) / f.points.length, cy = f.points.reduce((t, p) => t + p[1], 0) / f.points.length;
+    label(`${f.name}${f.animal ? ` · ${f.head ?? ''} ${ANIMALS[f.animal]?.label.toLowerCase() ?? ''}` : ''}`, cx, cy, 24, '#f6e7c8');
+  }
+
+  // 8. fences: posts and wire
+  if (s.layers.paths) for (const f of features) {
+    if (f.kind !== 'fence' || f.points.length < 2) continue;
+    line(f.points); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.lineWidth = f.id === selectedId ? 6 : 3; ctx.strokeStyle = f.id === selectedId ? '#fde68a' : (f.color || '#3b2a1a'); ctx.setLineDash([]); ctx.stroke();
+    ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.stroke();
+    let carry = 0;
+    for (let i = 1; i < f.points.length; i++) {
+      const [ax, ay] = f.points[i - 1], [bx, by] = f.points[i], L = Math.hypot(bx - ax, by - ay);
+      for (let d = carry; d <= L; d += 2.5) { const [px, py] = toPx(ax + ((bx - ax) * d) / L, ay + ((by - ay) * d) / L); ctx.fillStyle = '#2a1d10'; ctx.beginPath(); ctx.arc(px, py, Math.max(3, pxPerM * 0.12), 0, Math.PI * 2); ctx.fill(); }
+      carry = 2.5 - ((L - carry) % 2.5);
+    }
+  }
+
+  // 9. keyline pattern lines
+  if (s.layers.earthworks) for (const f of features) {
+    if (f.kind !== 'keyline' || f.points.length < 2) continue;
+    line(f.points); ctx.setLineDash([]);
+    ctx.lineWidth = f.id === selectedId ? 5 : 2.5;
+    ctx.strokeStyle = f.id === selectedId ? '#ffffff' : f.name.startsWith('Keyline') ? 'rgba(186,230,253,0.95)' : 'rgba(186,230,253,0.55)';
+    ctx.stroke();
+  }
+
+  // 10. sectors: soft wedges from their origin, labelled at the rim
+  if (s.layers.sectors) for (const f of features) {
+    if (f.kind !== 'sector' || f.points.length < 2) continue;
+    const st = SECTOR_STYLE[f.sector || 'wind'] || SECTOR_STYLE.wind;
+    const [o, t] = f.points;
+    const R = Math.hypot(t[0] - o[0], t[1] - o[1]) * pxPerM;
+    const b = Math.atan2(t[0] - o[0], t[1] - o[1]);
+    const spread = ((f.spread ?? st.spread) * Math.PI) / 180;
+    const [ox, oy] = toPx(o[0], o[1]);
+    const a0 = b - spread / 2 - Math.PI / 2, a1 = b + spread / 2 - Math.PI / 2;
+    const grad = ctx.createRadialGradient(ox, oy, 0, ox, oy, R);
+    const sunny = (f.sector || '').startsWith('sun');
+    grad.addColorStop(0, st.color + '00'); grad.addColorStop(0.55, st.color + (sunny ? '14' : '30')); grad.addColorStop(1, st.color + (sunny ? '38' : '70'));
+    ctx.beginPath(); ctx.moveTo(ox, oy); ctx.arc(ox, oy, R, a0, a1); ctx.closePath();
+    ctx.fillStyle = grad; ctx.fill();
+    ctx.lineWidth = f.id === selectedId ? 5 : 2.5; ctx.strokeStyle = f.id === selectedId ? '#ffffff' : st.color; ctx.setLineDash([12, 8]); ctx.stroke(); ctx.setLineDash([]);
+    // arrow toward the origin: energy coming in
+    const tipx = ox + Math.sin(b) * R * 0.92, tipy = oy - Math.cos(b) * R * 0.92, midx = ox + Math.sin(b) * R * 0.62, midy = oy - Math.cos(b) * R * 0.62;
+    ctx.beginPath(); ctx.moveTo(tipx, tipy); ctx.lineTo(midx, midy); ctx.lineWidth = 5; ctx.strokeStyle = st.color; ctx.stroke();
+    const ah = 16, ang = Math.atan2(midy - tipy, midx - tipx);
+    ctx.beginPath(); ctx.moveTo(midx, midy); ctx.lineTo(midx - ah * Math.cos(ang - 0.5), midy - ah * Math.sin(ang - 0.5)); ctx.lineTo(midx - ah * Math.cos(ang + 0.5), midy - ah * Math.sin(ang + 0.5)); ctx.closePath(); ctx.fillStyle = st.color; ctx.fill();
+    const lx = o[0] + Math.sin(b) * (R / pxPerM) * 1.0, ly = o[1] + Math.cos(b) * (R / pxPerM) * 1.0;
+    label(sunny || !f.name ? st.label : f.name.length > 28 ? st.label : f.name, Math.max(-g.size / 2 * 0.86, Math.min(g.size / 2 * 0.86, lx)), Math.max(-g.size / 2 * 0.9, Math.min(g.size / 2 * 0.9, ly)), 24, st.color);
   }
 }

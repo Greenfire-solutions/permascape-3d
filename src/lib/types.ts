@@ -40,7 +40,10 @@ export interface SiteObject {
   crop?: string; // garden beds: the library id of what is growing in it
 }
 
-export type FeatureKind = 'path' | 'zone' | 'swale' | 'berm';
+export type FeatureKind = 'path' | 'zone' | 'swale' | 'berm' | 'fence' | 'keyline' | 'sector' | 'paddock';
+
+export type SectorType = 'sun-summer' | 'sun-winter' | 'wind' | 'cold-wind' | 'fire' | 'view' | 'noise' | 'wildlife' | 'flood' | 'frost';
+export type Animal = 'chickens' | 'ducks' | 'geese' | 'goats' | 'sheep' | 'pigs' | 'cattle' | 'rabbits' | 'bees';
 
 export interface Feature {
   id: string;
@@ -53,6 +56,14 @@ export interface Feature {
   zone?: number; // permaculture zone 0 to 5
   color?: string;
   notes?: string;
+  // sector: points[0] is the origin, points[1] the tip; spread is the wedge's full angle in degrees
+  sector?: SectorType;
+  spread?: number;
+  // paddock: the animals grazing it and how many
+  animal?: Animal;
+  head?: number;
+  restDays?: number;
+  group?: string; // keyline lines made together share a group id
 }
 
 export interface Climate {
@@ -127,7 +138,7 @@ export interface Settings {
   layers: Record<LayerId, boolean>;
 }
 
-export type LayerId = 'plants' | 'structures' | 'gardens' | 'water' | 'paths' | 'zones' | 'earthworks';
+export type LayerId = 'plants' | 'structures' | 'gardens' | 'water' | 'paths' | 'zones' | 'earthworks' | 'sectors';
 
 export interface DesignState {
   heights: Float32Array;
@@ -148,6 +159,35 @@ export interface Project {
   features: Feature[];
   settings: Settings;
   thumb?: string | null;
+  goals?: string[];
+  ai?: AiTurn[];
+}
+
+export interface AiAction {
+  kind: 'plant' | 'guild' | 'hedge' | 'zone' | 'swale' | 'pond' | 'structure' | 'garden' | 'path' | 'paddock' | 'fence';
+  label: string;
+  why: string;
+  species?: string;
+  x?: number;
+  y?: number;
+  points?: [number, number][];
+  zone?: number;
+  structure?: 'building' | 'greenhouse' | 'tank' | 'compost' | 'coop' | 'hive';
+  size?: number; // radius for ponds, length for swales, capacity in litres for tanks
+  width?: number;
+  depth?: number;
+  animal?: Animal;
+}
+
+export interface AiTurn {
+  id: string;
+  at: string;
+  mode: 'ask' | 'design';
+  question: string;
+  answer: string;
+  actions: AiAction[];
+  applied?: number[];
+  seconds?: number;
 }
 
 export const LAYER_OF: Record<ObjectType, LayerId> = {
@@ -165,5 +205,5 @@ export const DEFAULT_SETTINGS: Settings = {
   contourInterval: 1,
   grid: false,
   units: 'imperial',
-  layers: { plants: true, structures: true, gardens: true, water: true, paths: true, zones: true, earthworks: true },
+  layers: { plants: true, structures: true, gardens: true, water: true, paths: true, zones: true, earthworks: true, sectors: true },
 };

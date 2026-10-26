@@ -1,9 +1,29 @@
 # Permascape 3D
 
 A permaculture site designer. Type any address and the land loads in 3D with its real
-slope, a satellite photo, rainfall, frost dates, hardiness zone and soil. Then design on it:
-swales on contour, ponds, zones, paths, plants that grow over the years, buildings, and
-water running over the ground.
+slope, a satellite photo, rainfall, frost dates, hardiness zone, wind and soil. Then design on
+it: swales on contour, keyline patterns, ponds, sectors, zones, guilds, hedgerows, paddocks,
+fences, plants that grow over the years, buildings, and water running over the ground. Permie,
+the built-in AI designer, can draw a whole first design or answer questions about your land.
+
+## The app at a glance
+
+- **Design** (the 3D land). Tool rail on the left, grouped the way a designer works:
+  Select, Water, Shape, Plan, Plants, Build. Each group opens a labelled flyout with a
+  keyboard key for the common tools (V, M, C, K, W, Z, S, F, P, G, H, B).
+- **Inspector** on the right with tabs: Inspect (the selection, tool options, a six-step
+  getting-started checklist and the design summary), Analyze (overlays, sectors, wind rose),
+  Site (land, climate, soil), Tasks (this month's jobs and the journal), Layers.
+- **Plants**: the 206-plant library, each judged against your climate, with search, layer and
+  function filters, the planting calendar for your land, and one-press Plant, Guild or Hedgerow.
+- **Calendar**: twelve months of jobs from every plant and bed, and a harvest calendar.
+- **Water**: month-by-month water budget. Reference evaporation by the FAO-56 Hargreaves method
+  from your temperatures, plant demand from canopy and water need, roof catchment into tanks,
+  tank shortfall and the tank size that carries the driest run.
+- **Review**: a live score (0 to 100) over five areas (water, plants and diversity, zones and
+  flow, climate and sectors, soil and earthworks). Every weak spot has a one-press next step.
+- **Ask Permie**: the AI designer (below).
+- Timeline dock: any date and hour (real sun and shadows) and a growth slider to 30 years.
 
 Grew out of `docs-original-permascape_3d.tsx` (the single-file prototype from Downloads),
 with the plant record, journal, monthly tasks, growth timeline and analysis overlays taken
@@ -28,6 +48,7 @@ terminal and `npm run dev` (Vite on 8141, proxies `/api` to 8140) in another.
 | soil | USDA Soil Data Access (SSURGO) | US only |
 | hardiness zone | USDA 2023 map by ZIP (phzmapi.org) | US; estimated from climate elsewhere |
 | wild plants nearby | GBIF occurrence records | worldwide |
+| wind | Open-Meteo ERA5, daily dominant direction 2020 to 2024 | wind rose and sectors |
 
 Everything fetched is cached under `data/cache`, so a site opens offline the second time.
 Projects are JSON files in `data/projects`.
@@ -49,6 +70,40 @@ Projects are JSON files in `data/projects`.
   earth moved, planting schedule. Prints or saves as PDF.
 - **Files:** autosave, undo and redo, save as copy, export PNG, GLB 3D model, CSV element
   list, JSON project file, and import.
+
+## Permaculture tools added in the second build
+
+- **Tree guild** (G): click once to plant a fruit or nut tree with nitrogen fixers, nutrient
+  miners, insect plants, pest confusers and living mulch around its drip line, every one chosen
+  to fit your hardiness zone.
+- **Hedgerow** (H): drag a line; a tall windbreak row at the tree's own spacing plus a staggered
+  shrub row, auto-picked for your zone (or choose).
+- **Keyline pattern** (K): click the keypoint; the keyline follows the exact contour and parallel
+  lines are laid either side at your spacing, previewed as you hover.
+- **Sectors** (S): drag wedges for wind, cold wind, fire, views, noise, wildlife, flood and cold
+  air. "Map sun and wind sectors" draws the real solstice sun arcs (sunrise and sunset bearings
+  and noon height) and the prevailing summer and winter wind from five years of measured data,
+  with a wind rose by season.
+- **Fence** (F) with post count, **Paddock** with animals, head count, the area they need and
+  rest days for rotation.
+
+## Permie, the AI designer
+
+Runs on Claude Code on this Mac (`claude -p`, your own Claude sign-in; no API key is read and
+`ANTHROPIC_API_KEY` is removed from the child). It is told the land in numbers: site size, a
+10 by 10 terrain grid of height, slope, aspect and drainage lines, climate, frost, chill, soil,
+measured wind, everything already placed, and the plant ids that grow here.
+
+- **Design my land**: pick goals (food forest, market garden, water first...) and extra wishes.
+  It returns 12 to 40 proposed changes (swales, ponds, tanks, zones, guilds, hedges, paddocks,
+  paths) with a reason for each. They preview on the land as outlines; tick what you want and
+  press Add. One Undo takes the whole proposal back.
+- **Ask anything**: questions about your land (it may search the web for nurseries or local
+  rules), with optional proposed changes.
+- Agents propose, you decide: nothing is added until you press Add. Answers are scrubbed of em
+  dashes. Each call runs in an empty temp folder with no MCP servers, skills or settings, and
+  its transcript folder is deleted afterwards. The conversation is saved with the project.
+- "Deeper design" uses Opus instead of Sonnet (slower). A design takes 30 to 90 seconds.
 
 ## Zone plant guide
 
@@ -79,10 +134,13 @@ snapshots in `test/fixtures`, so it runs offline).
 
 ## Tests
 
-- `npm test`: terrain maths, earthworks, flow, sun, sun hours, plants, TIFF and climate
+- `npm test` (44 checks): guilds, hedgerows, keyline, sun sectors against published solstice
+  bearings, the water budget, the design review, applying an AI proposal, the wind rose; terrain maths, earthworks, flow, sun, sun hours, plants, TIFF and climate
   parsing, the plant advisor in nine real places, and the server (its own instance on 8142 with throwaway data).
 - `npm run build && node test/e2e.mjs [--shots dir]`: real headless Chrome drives the whole
-  thing on a real address (needs internet). `E2E_ADDRESS="..."` to try another place.
+  thing on a real address (needs internet): every tool, every workspace, review fixes, and
+  Permie's propose, preview, apply and undo path (with a canned AI answer, `PERMASCAPE_FAKE_AI=1`,
+  so the test costs nothing). `E2E_ADDRESS="..."` to try another place.
 
 ## Ports
 

@@ -90,25 +90,33 @@ export default function StartDialog({ canClose, onClose, onOpenProject, onCreate
   })[s.state];
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 no-print" onMouseDown={(e) => { if (e.target === e.currentTarget && canClose && !busy) onClose(); }}>
-      <div className="bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto scroll-thin">
-        <div className="px-7 pt-7 pb-5 border-b border-zinc-800">
-          <div className="flex items-center gap-3 mb-1">
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-600 to-teal-800 flex items-center justify-center"><Sprout size={20} className="text-white" /></div>
-            <h1 className="text-xl font-semibold text-zinc-100">Permascape 3D</h1>
+    <div className="fixed inset-0 z-50 bg-[#070b08]/80 backdrop-blur-xl flex items-center justify-center p-4 no-print grain" onMouseDown={(e) => { if (e.target === e.currentTarget && canClose && !busy) onClose(); }}>
+      <div className="bg-zinc-900/90 border hairline rounded-[28px] shadow-glass w-full max-w-2xl max-h-[92vh] overflow-y-auto scroll-thin animate-sheet">
+        <div className="relative px-8 pt-8 pb-6 border-b hairline overflow-hidden">
+          <div className="absolute -top-24 -right-16 w-72 h-72 rounded-full bg-emerald-400/10 blur-3xl pointer-events-none" />
+          <div className="flex items-center gap-3 mb-5">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-emerald-300 via-emerald-500 to-emerald-800 flex items-center justify-center shadow-glow"><Sprout size={21} className="text-emerald-950" strokeWidth={2.4} /></div>
+            <div className="leading-none">
+              <div className="font-display text-xl text-zinc-50 tracking-tight">Permascape</div>
+              <div className="text-[9px] uppercase tracking-[0.22em] text-emerald-300/80 font-semibold mt-1">3D permaculture design</div>
+            </div>
           </div>
-          <p className="text-sm text-zinc-400">Type any address. The land comes in with its real slope, a satellite photo, rainfall, frost dates and soil, ready to design on.</p>
+          <h1 className="font-display text-[34px] leading-[1.08] text-zinc-50 tracking-tight text-balance">Design with the land, <span className="italic text-emerald-300">not against it.</span></h1>
+          <p className="text-[14px] text-zinc-300 mt-3 max-w-lg leading-relaxed">Type any address. Your land arrives in 3D with its real slope, satellite photo, rainfall, frost dates, wind and soil. Then shape water, zones, guilds and hedgerows, or let Permie, the AI designer, draw a first plan.</p>
+          <div className="flex flex-wrap gap-1.5 mt-4">
+            {['Real lidar slope', 'Swales on contour', 'Keyline', 'Sun and wind sectors', '206 plants judged for your climate', 'Water budget', 'AI designer'].map((t) => <span key={t} className="text-[11px] px-2.5 py-1 rounded-full bg-white/[0.05] border hairline text-zinc-300">{t}</span>)}
+          </div>
         </div>
 
-        <div className="px-7 py-5 space-y-4">
+        <div className="px-8 py-6 space-y-4">
           <form onSubmit={(e) => { e.preventDefault(); search(); }} className="flex gap-2">
             <div className="relative flex-1">
               <MapPin size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
               <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} disabled={!!busy}
                 placeholder="Address, place, or coordinates (40.0150, -105.2705)"
-                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg pl-9 pr-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500" />
+                className="w-full bg-zinc-950/80 border border-white/10 rounded-2xl pl-10 pr-3 py-3.5 text-[15px] text-zinc-50 placeholder:text-zinc-500 focus:outline-none focus:border-emerald-400/60 focus:ring-4 focus:ring-emerald-400/10" />
             </div>
-            <button type="submit" disabled={!!busy || searching} className="px-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-50">
+            <button type="submit" disabled={!!busy || searching} className="px-5 rounded-2xl bg-emerald-400 hover:bg-emerald-300 text-emerald-950 text-sm font-semibold flex items-center gap-2 disabled:opacity-50 shadow-glow">
               {searching ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />} Find
             </button>
           </form>
@@ -116,7 +124,7 @@ export default function StartDialog({ canClose, onClose, onOpenProject, onCreate
           {error && <div className="text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">{error}</div>}
 
           {results && results.length > 1 && !pick && (
-            <div data-geo-results className="border border-zinc-800 rounded-lg divide-y divide-zinc-800">
+            <div data-geo-results className="border hairline rounded-2xl divide-y divide-white/5 overflow-hidden">
               {results.map((r, i) => (
                 <button key={i} onClick={() => choose(r)} className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-900 flex gap-2">
                   <MapPin size={14} className="mt-0.5 text-emerald-500 shrink-0" />{r.label}
@@ -126,7 +134,7 @@ export default function StartDialog({ canClose, onClose, onOpenProject, onCreate
           )}
 
           {pick && !steps && (
-            <div className="border border-emerald-700/40 bg-emerald-900/10 rounded-lg p-4 space-y-3">
+            <div className="border border-emerald-400/25 bg-emerald-400/[0.05] rounded-2xl p-5 space-y-3 animate-rise">
               <div className="text-sm text-zinc-200 flex gap-2"><MapPin size={15} className="mt-0.5 text-emerald-400 shrink-0" /><span>{pick.label}<span className="block text-xs text-zinc-500 font-mono">{pick.lat.toFixed(5)}, {pick.lon.toFixed(5)}</span></span></div>
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-3">
@@ -157,7 +165,7 @@ export default function StartDialog({ canClose, onClose, onOpenProject, onCreate
           )}
 
           {steps && (
-            <div className="border border-zinc-800 rounded-lg p-4 space-y-2">
+            <div className="border hairline rounded-2xl p-5 space-y-2.5 bg-zinc-950/40">
               {steps.map((s) => (
                 <div key={s.key} className="flex items-start gap-3 text-sm">
                   <div className="mt-0.5">{icon(s)}</div>
@@ -170,7 +178,7 @@ export default function StartDialog({ canClose, onClose, onOpenProject, onCreate
         </div>
 
         {!steps && (
-          <div className="px-7 pb-7">
+          <div className="px-8 pb-8">
             <div className="flex items-center justify-between mb-2">
               <div className="text-[11px] uppercase tracking-widest text-zinc-500 font-bold">Your projects</div>
               <button onClick={() => onCreated(blankProject(), null)} className="text-xs text-zinc-400 hover:text-emerald-400 flex items-center gap-1"><Box size={13} /> Blank flat sandbox</button>
@@ -180,9 +188,9 @@ export default function StartDialog({ canClose, onClose, onOpenProject, onCreate
             ) : (
               <div className="grid grid-cols-2 gap-2">
                 {projects.map((p) => (
-                  <div key={p.id} className="group border border-zinc-800 rounded-lg overflow-hidden hover:border-emerald-600/60 bg-zinc-900/40">
+                  <div key={p.id} className="group border hairline rounded-2xl overflow-hidden hover:border-emerald-400/50 bg-zinc-950/40 transition-all hover:-translate-y-0.5">
                     <button onClick={() => onOpenProject(p.id)} className="w-full text-left">
-                      <div className="h-24 bg-zinc-900 flex items-center justify-center overflow-hidden">
+                      <div className="h-28 bg-zinc-950 flex items-center justify-center overflow-hidden">
                         {p.thumb ? <img src={p.thumb} alt="" className="w-full h-full object-cover" /> : <FolderOpen className="text-zinc-700" />}
                       </div>
                       <div className="px-3 py-2">

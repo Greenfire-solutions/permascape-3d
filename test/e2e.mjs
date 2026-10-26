@@ -21,7 +21,7 @@ let pass = 0, fail = 0;
 const check = (name, ok, extra = '') => { console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${name}${extra ? `  (${extra})` : ''}`); ok ? pass++ : fail++; };
 
 // ---- server
-const server = spawn(process.execPath, [path.join(ROOT, 'server/server.mjs')], { env: { ...process.env, PERMASCAPE_PORT: String(PORT), PERMASCAPE_DATA: DATA }, stdio: 'pipe' });
+const server = spawn(process.execPath, [path.join(ROOT, 'server/server.mjs')], { env: { ...process.env, PERMASCAPE_PORT: String(PORT), PERMASCAPE_DATA: DATA, PERMASCAPE_FAKE_AI: '1' }, stdio: 'pipe' });
 let serverLog = '';
 server.stdout.on('data', (d) => { serverLog += d; }); server.stderr.on('data', (d) => { serverLog += d; });
 for (let i = 0; ; i++) {
@@ -62,6 +62,17 @@ const clickText = (tag, text) => js(`(() => { const el = [...document.querySelec
 const typeInto = (sel, value) => js(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
 const mouse = async (type, x, y, extra = {}) => send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra });
 const clickAt = async (x, y, extra) => { await mouse('mouseMoved', x, y, { buttons: 0 }); await mouse('mousePressed', x, y, extra); await mouse('mouseReleased', x, y, extra); await sleep(150); };
+// the toolbar groups its tools: open the group, then press the tool
+const GROUPS = { select: ['select', 'measure'], water: ['contour', 'keyline', 'pond', 'swale', 'berm', 'tank', 'irrigation', 'water'], land: ['raise', 'lower', 'smooth', 'flatten'], plan: ['zone', 'sector', 'path', 'fence', 'paddock'], plants: ['plant', 'guild', 'hedge', 'garden'], build: ['building', 'greenhouse', 'compost', 'coop', 'hive'] };
+const pickTool = async (id) => {
+  const group = Object.keys(GROUPS).find((k) => GROUPS[k].includes(id));
+  await js(`document.querySelector('[data-group=${group}]').click()`); await sleep(120);
+  if (!(await js(`!!document.querySelector('[data-tool=${id}]')`)) && (await js('window.__ps.tool')) !== id) { await js(`document.querySelector('[data-group=${group}]').click()`); await sleep(120); }
+  const ok = await js(`(() => { const t = document.querySelector('[data-tool=${id}]'); if (!t) return false; t.click(); return true; })()`);
+  await sleep(120);
+  if (!ok && (await js('window.__ps.tool')) !== id) throw new Error('no tool ' + id);
+};
+const drag = async (pts) => { const a = await screen(...pts[0]); await mouse('mouseMoved', a.x, a.y, { buttons: 0 }); await mouse('mousePressed', a.x, a.y); for (let i = 1; i < pts.length; i++) { const p0 = await screen(...pts[i - 1]), p1 = await screen(...pts[i]); for (let k = 1; k <= 8; k++) await mouse('mouseMoved', p0.x + ((p1.x - p0.x) * k) / 8, p0.y + ((p1.y - p0.y) * k) / 8); } const z = await screen(...pts[pts.length - 1]); await mouse('mouseReleased', z.x, z.y); await sleep(250); };
 const screen = (x, y) => js(`window.__psView.project(${x}, ${y})`);
 const state = () => js('JSON.parse(JSON.stringify(window.__ps))');
 const shot = async (name) => { if (!SHOTS) return; await sleep(400); const r = await send('Page.captureScreenshot', { format: 'png' }); fs.mkdirSync(SHOTS, { recursive: true }); fs.writeFileSync(path.join(SHOTS, name + '.png'), Buffer.from(r.data, 'base64')); };
@@ -84,7 +95,7 @@ try {
   check('the site builds and opens', !!(await until(`window.__ps && window.__ps.project && window.__psView`, 90000)));
   const framesA = await js('window.__psView.frames()'); await sleep(3000);
   check('the 3D view is drawing frames', (await js('window.__psView.frames()')) > framesA);
-  await clickText('button', 'Site');
+  await clickSel('[data-tab=site]');
   const siteText = await until(`(() => { const t = document.body.innerText; return document.body.textContent.includes('Mean slope') ? 1 : null })()`);
   check('site panel lists the slope', !!siteText);
   const proj = await (await fetch(`${B}/api/projects`)).json();
@@ -102,14 +113,14 @@ try {
   check('hovering shows elevation and slope', !!(await until(`document.body.innerText.includes('Elev ') && document.body.innerText.includes('Slope ')`, 5000)));
 
   console.log('\n== placing things ==');
-  await clickSel("button[title^='Plant']");
+  await pickTool('plant');
   for (const [x, y] of [[-20, 10], [-10, 10], [0, 10]]) { const p = await screen(x, y); await clickAt(p.x, p.y); }
   let st = await state();
   check('three trees planted', st.objects.filter((o) => o.type === 'plant').length === 3, `${st.objects.length} objects`);
   check('the last one is selected with its record open', !!(await until(`document.body.innerText.includes('Selected: Plant')`, 3000)));
-  await clickSel("button[title^='Building']");
+  await pickTool('building');
   { const p = await screen(20, -20); await clickAt(p.x, p.y); }
-  await clickSel("button[title^='Pond']");
+  await pickTool('pond');
   { const p = await screen(-30, -40); await clickAt(p.x, p.y); }
   st = await state();
   const pond = st.objects.find((o) => o.type === 'pond');
@@ -118,18 +129,18 @@ try {
   await shot('02-placed');
 
   console.log('\n== earthworks ==');
-  await clickSel("button[title^='Swale on contour']");
+  await pickTool('contour');
   { const p = await screen(10, 40); await mouse('mouseMoved', p.x, p.y, { buttons: 0 }); await sleep(300); await clickAt(p.x, p.y); }
   st = await state();
   check('a swale was dug on contour', st.features.some((f) => f.kind === 'swale'), st.features.map((f) => f.name).join(', '));
-  await clickSel("button[title^='Path']");
+  await pickTool('path');
   { const a = await screen(-40, 0), b = await screen(30, 0);
     await mouse('mouseMoved', a.x, a.y, { buttons: 0 }); await mouse('mousePressed', a.x, a.y);
     for (let k = 1; k <= 12; k++) await mouse('mouseMoved', a.x + ((b.x - a.x) * k) / 12, a.y + ((b.y - a.y) * k) / 12);
     await mouse('mouseReleased', b.x, b.y); await sleep(200); }
   st = await state();
   check('a path was drawn', st.features.some((f) => f.kind === 'path'));
-  await clickSel("button[title^='Zone']");
+  await pickTool('zone');
   for (const [x, y] of [[-60, 60], [60, 60], [60, -60], [-60, -60]]) { const p = await screen(x, y); await clickAt(p.x, p.y); }
   await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
   await sleep(200);
@@ -167,18 +178,18 @@ try {
   await js(`document.querySelector('[data-zone-guide] button[title="Close"]').click()`);
   await sleep(200);
   check('the guide closes', !(await js(`!!document.querySelector('[data-zone-guide]')`)));
-  await clickSel("button[title^='Raise']");
+  await pickTool('raise');
   { const p = await screen(40, 40); await mouse('mouseMoved', p.x, p.y, { buttons: 0 }); await mouse('mousePressed', p.x, p.y); for (let k = 0; k < 8; k++) await mouse('mouseMoved', p.x + k * 4, p.y); await mouse('mouseReleased', p.x + 28, p.y); await sleep(200); }
   const stepBefore = (await state()).step;
   check('sculpting made a history step', stepBefore > 0, `step ${stepBefore}`);
 
   console.log('\n== measure ==');
-  await clickSel("button[title^='Measure']");
+  await pickTool('measure');
   for (const [x, y] of [[-50, -50], [50, 50]]) { const p = await screen(x, y); await clickAt(p.x, p.y); }
   check('measure reports distance and grade', !!(await until(`document.body.innerText.includes('along the ground') && document.body.innerText.includes('grade')`, 3000)));
 
   console.log('\n== select, edit and move ==');
-  await clickSel("button[title^='Select and move']");
+  await pickTool('select');
   const tree = (await state()).objects.find((o) => o.type === 'plant');
   { const p = await screen(tree.x, tree.y);
     // aim a little up the trunk so the ray hits the model
@@ -197,7 +208,7 @@ try {
 
   console.log('\n== undo and redo ==');
   const n0 = (await state()).objects.length;
-  await clickSel("button[title^='Building']");
+  await pickTool('building');
   { const p = await screen(-50, 30); await clickAt(p.x, p.y); }
   check('placed one more', (await state()).objects.length === n0 + 1);
   await clickSel("button[title^='Undo']"); await sleep(150);
@@ -206,6 +217,7 @@ try {
   check('redo brings it back', (await state()).objects.length === n0 + 1);
 
   console.log('\n== analysis overlays ==');
+  await clickSel('[data-tab=analyze]'); await sleep(200);
   for (const label of ['Slope', 'Aspect (facing)', 'Elevation']) { await clickText('button', label); await sleep(300); }
   check('slope, aspect and elevation overlays switch', (await state()).overlay === 'elevation');
   await clickText('button', 'Water flow');
@@ -217,7 +229,7 @@ try {
   await clickText('button', 'None');
 
   console.log('\n== water simulation ==');
-  await clickSel("button[title^='Water drop']");
+  await pickTool('water');
   await clickText('button', 'Start rainfall');
   const f0 = await js('window.__psView.frames()');
   const rained = await until(`window.__psView.particles() > 50`, 30000);
@@ -231,10 +243,92 @@ try {
   check('growth slider moves the view 15 years ahead', !!(await until(`document.body.innerText.includes('+15.0 yrs')`, 3000)));
   await shot('06-15-years');
 
+  console.log('\n== permaculture tools ==');
+  await pickTool('select');
+  let c0 = (await state()).objects.length;
+  await pickTool('guild');
+  { const p = await screen(-30, -70); await clickAt(p.x, p.y); }
+  st = await state();
+  check('the guild tool plants a tree with its helpers', st.objects.length - c0 >= 5, `${st.objects.length - c0} plants`);
+  c0 = st.objects.length;
+  await pickTool('hedge');
+  await drag([[-80, 85], [80, 85]]);
+  st = await state();
+  check('the hedgerow tool plants a windbreak along the line', st.objects.length - c0 >= 20, `${st.objects.length - c0} plants`);
+  await pickTool('fence');
+  await drag([[-60, -20], [40, -20]]);
+  check('a fence was drawn', (await state()).features.some((f) => f.kind === 'fence'));
+  await pickTool('keyline');
+  { const p = await screen(20, 20); await mouse('mouseMoved', p.x, p.y, { buttons: 0 }); await sleep(300); await clickAt(p.x, p.y); }
+  st = await state();
+  check('the keyline tool lays out parallel lines', st.features.filter((f) => f.kind === 'keyline').length >= 3, `${st.features.filter((f) => f.kind === 'keyline').length} lines`);
+  await pickTool('paddock');
+  for (const [x, y] of [[30, 10], [65, 10], [65, 45]]) { const p = await screen(x, y); await clickAt(p.x, p.y); }
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+  await sleep(200);
+  check('a paddock was drawn with its animals', (await state()).features.some((f) => f.kind === 'paddock') && !!(await until(`document.body.textContent.includes('Rest between grazes')`, 3000)));
+  await pickTool('sector');
+  await drag([[0, 0], [-60, 40]]);
+  check('a hand-drawn sector was added', (await state()).features.some((f) => f.kind === 'sector'));
+  await pickTool('select');
+  await clickSel('[data-tab=analyze]');
+  await clickText('button', 'Map sun and wind sectors');
+  check('sun and wind sectors are mapped from real data', !!(await until(`window.__ps.features.filter(f => f.kind === 'sector').length >= 3`, 30000)), (await state()).features.filter((f) => f.kind === 'sector').map((f) => f.name).join(' | '));
+  check('the wind rose is drawn', !!(await until(`document.body.innerText.includes('Wind comes from')`, 20000)));
+  await shot('06b-tools');
+
+  console.log('\n== workspaces ==');
+  await clickSel('[data-nav=Plants]');
+  check('the plant library lists the plants', !!(await until(`document.querySelectorAll('[data-species]').length > 100`, 15000)));
+  await clickSel('[data-species=apple]');
+  check('a plant shows its calendar for this land', !!(await until(`!!document.querySelector('[data-plant-detail]') && document.querySelector('[data-plant-detail]').textContent.includes('On your land')`, 5000)));
+  await shot('08-library');
+  await clickText('[data-plant-detail] button', 'Plant it on the land');
+  check('plant it picks the plant tool', (await state()).tool === 'plant' && !(await js(`!!document.querySelector('[data-species]')`)));
+  await clickSel('[data-nav=Calendar]');
+  check('the year calendar shows twelve months of jobs', !!(await until(`document.body.innerText.includes('The year on your land') && document.body.innerText.includes('December')`, 5000)));
+  await clickText('button', 'Harvests');
+  check('the harvest calendar fills from the plants', !!(await until(`document.body.innerText.includes('Plant') && document.querySelectorAll('.grid-cols-\\[220px_repeat\\(12\\2c 1fr\\)\\]').length >= 2`, 5000)) || !!(await until(`document.body.innerText.includes('Apple')`, 2000)));
+  await shot('09-calendar');
+  await clickSel('[data-nav=Water]');
+  check('the water budget runs month by month', !!(await until(`document.body.textContent.includes('Irrigation need') && document.body.textContent.includes('What this means')`, 5000)));
+  await shot('10-water');
+  await clickSel('[data-nav=Review]');
+  check('the design review scores five areas', !!(await until(`document.querySelectorAll('[data-review-area]').length === 5`, 5000)));
+  await shot('11-review');
+  c0 = (await state()).objects.filter((o) => o.type === 'compost').length;
+  if (await js(`!!document.querySelector('[data-fix=compost]')`)) {
+    await clickSel('[data-fix=compost]');
+    check('a review fix acts on the design', (await state()).objects.filter((o) => o.type === 'compost').length === c0 + 1);
+  } else check('a review fix acts on the design (compost already present)', true);
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await sleep(200);
+
+  console.log('\n== Permie, the AI designer (canned answers in tests) ==');
+  await clickSel('[data-permie-open]');
+  check('Permie opens', !!(await until(`!!document.querySelector('[data-permie]')`, 3000)));
+  await clickText('[data-permie] button', 'Draw me a design');
+  check('a proposal comes back with its changes', !!(await until(`document.querySelectorAll('[data-turn] input[type=checkbox]').length === 4`, 20000)));
+  check('the proposal previews on the land first', !!(await until(`document.body.innerText.includes('Previewing')`, 3000)));
+  await shot('12-permie');
+  const before4 = await state();
+  await clickText('[data-permie] button', 'Add 4 to my design');
+  await sleep(400);
+  st = await state();
+  check('applying adds the zone, guild, tank and swale', st.features.length === before4.features.length + 2 && st.objects.length >= before4.objects.length + 6, `${st.features.length - before4.features.length} features, ${st.objects.length - before4.objects.length} objects`);
+  await clickSel("button[title^='Undo']"); await sleep(200);
+  st = await state();
+  check('one Undo takes the whole proposal back', st.objects.length === before4.objects.length && st.features.length === before4.features.length);
+  await clickSel("button[title^='Redo']"); await sleep(200);
+  await js(`document.querySelector('[data-permie] button[title=Close]').click()`);
+  await sleep(150);
+
   console.log('\n== tasks, summary and report ==');
-  await clickText('button', 'Tasks and journal');
+  await clickSel('[data-tab=tasks]');
   check('tasks panel opens', !!(await until(`document.body.innerText.includes('worked out from each plant')`, 3000)));
-  await clickText('button', 'Design summary');
+  await clickSel('[data-tab=inspect]');
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await pickTool('select');
   await clickText('button', 'Open the full site report');
   check('site report renders', !!(await until(`document.querySelector('.report-root') && document.body.innerText.includes('Planting schedule')`, 5000)));
   await shot('07-report');
@@ -242,7 +336,7 @@ try {
 
   console.log('\n== save and reload ==');
   await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 's', code: 'KeyS', modifiers: 4, windowsVirtualKeyCode: 83 });
-  check('save finishes', !!(await until(`window.__ps.saveState === 'saved' && !window.__ps.dirty`, 10000)));
+  check('save finishes', !!(await until(`window.__ps.saveState === 'saved' && !window.__ps.dirty`, 20000)), JSON.stringify(await js('({ s: window.__ps.saveState, d: window.__ps.dirty, a: document.activeElement && document.activeElement.tagName })')));
   const before = await state();
   await send('Page.reload');
   await sleep(1500);

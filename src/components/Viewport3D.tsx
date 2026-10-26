@@ -11,12 +11,13 @@ import { sunVector } from '../lib/sun';
 export type Tool =
   | 'select' | 'raise' | 'lower' | 'smooth' | 'flatten' | 'berm' | 'swale' | 'contour'
   | 'path' | 'zone' | 'measure' | 'water'
-  | 'plant' | 'building' | 'greenhouse' | 'tank' | 'pond' | 'garden' | 'compost' | 'coop' | 'hive' | 'irrigation';
+  | 'plant' | 'building' | 'greenhouse' | 'tank' | 'pond' | 'garden' | 'compost' | 'coop' | 'hive' | 'irrigation'
+  | 'guild' | 'hedge' | 'fence' | 'keyline' | 'sector' | 'paddock';
 
 export const SCULPT_TOOLS: Tool[] = ['raise', 'lower', 'smooth', 'flatten'];
-export const STROKE_TOOLS: Tool[] = ['berm', 'swale', 'path'];
+export const STROKE_TOOLS: Tool[] = ['berm', 'swale', 'path', 'hedge', 'fence', 'sector'];
 export const PLACE_TOOLS: Tool[] = ['plant', 'building', 'greenhouse', 'tank', 'pond', 'garden', 'compost', 'coop', 'hive', 'irrigation'];
-const CLICK_TOOLS: Tool[] = ['contour', 'zone', 'measure', ...PLACE_TOOLS];
+const CLICK_TOOLS: Tool[] = ['contour', 'zone', 'measure', 'guild', 'keyline', 'paddock', ...PLACE_TOOLS];
 
 export interface OverlayLine { points: [number, number][]; color: string; closed?: boolean; width?: number }
 
@@ -103,7 +104,7 @@ const Viewport3D = forwardRef<ViewportHandle, Props>((props, ref) => {
     terrain.castShadow = true;
     scene.add(terrain);
 
-    const skirt = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshStandardMaterial({ color: '#5a4632', roughness: 1, side: THREE.DoubleSide }));
+    const skirt = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshStandardMaterial({ color: '#4a3826', roughness: 1, side: THREE.DoubleSide }));
     scene.add(skirt);
 
     const objectsGroup = new THREE.Group();
@@ -113,7 +114,7 @@ const Viewport3D = forwardRef<ViewportHandle, Props>((props, ref) => {
 
     const brushMesh = new THREE.Mesh(
       new THREE.RingGeometry(0.94, 1, 48).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0x34d399, transparent: true, opacity: 0.9, depthTest: false }),
+      new THREE.MeshBasicMaterial({ color: 0xa7de75, transparent: true, opacity: 0.9, depthTest: false }),
     );
     brushMesh.renderOrder = 20;
     brushMesh.visible = false;
@@ -433,9 +434,17 @@ const Viewport3D = forwardRef<ViewportHandle, Props>((props, ref) => {
     T.sunLight.intensity = sun.altitude > 0 ? 0.6 + 2.0 * Math.min(1, sun.altitude / 35) : 0;
     T.sunLight.color.setHSL(0.09, 0.6, 0.6 + 0.3 * Math.min(1, sun.altitude / 30));
     T.hemi.intensity = 0.18 + 0.6 * day;
-    const sky = new THREE.Color('#0b1020').lerp(new THREE.Color(sun.altitude < 8 ? '#d9a77a' : '#9cc3e4'), day);
-    T.scene.background = sky;
-    T.scene.fog = new THREE.Fog(sky, grid.size * 3, grid.size * 12);
+    // a vertical gradient sky: deep at the top, warm haze at the horizon near sunrise and sunset
+    const top = new THREE.Color('#05080a').lerp(new THREE.Color('#5d8fb8'), day);
+    const horizon = new THREE.Color('#10171a').lerp(new THREE.Color(sun.altitude < 10 ? '#e8b48a' : '#cfe0e6'), day);
+    const c = document.createElement('canvas'); c.width = 2; c.height = 256;
+    const g2 = c.getContext('2d')!; const gr = g2.createLinearGradient(0, 0, 0, 256);
+    gr.addColorStop(0, '#' + top.getHexString()); gr.addColorStop(0.62, '#' + horizon.getHexString()); gr.addColorStop(1, '#' + horizon.clone().multiplyScalar(0.55).getHexString());
+    g2.fillStyle = gr; g2.fillRect(0, 0, 2, 256);
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    if (T.scene.background && (T.scene.background as any).isTexture) (T.scene.background as THREE.Texture).dispose();
+    T.scene.background = tex;
+    T.scene.fog = new THREE.Fog(horizon, grid.size * 3, grid.size * 12);
   }, [sun.azimuth, sun.altitude, grid.size]);
 
   // ---- objects ----

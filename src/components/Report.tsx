@@ -9,6 +9,7 @@ import { fmtLen, fmtArea, fmtWater, fmtRain, fmtTemp, fmtVol, Units } from '../l
 import { typeName } from './Panels';
 import { advise, rangesText, SiteClimate, doyLabel } from '../lib/advisor';
 import { pointInPolygon } from '../lib/terrain';
+import { waterBudget, reviewDesign, ANIMALS, bearing, effectiveZone } from '../lib/permaculture';
 
 interface Props {
   name: string; site: Site; objects: SiteObject[]; features: Feature[]; stats: any; units: Units; image: string; onClose: () => void; sc?: SiteClimate | null;
@@ -19,8 +20,10 @@ export default function Report({ name, site, objects, features, stats, units, im
   const c = site.climate, s = site.soil;
   const plants = objects.filter((o) => o.type === 'plant');
   const others = objects.filter((o) => o.type !== 'plant');
-  const zone = c?.zone?.zone;
+  const zone = effectiveZone(site);
   const maxP = c ? Math.max(1, ...c.monthlyPrecipMm) : 1;
+  const wb = useMemo(() => waterBudget(site, objects, features, 1), [site, objects, features]);
+  const review = useMemo(() => reviewDesign({ site, objects, features, zone: zone ?? null, meanSlope: stats.meanSlope, cutM3: stats.cutM3, fillM3: stats.fillM3, roofCatchL: d.roofCatchL }), [site, objects, features, stats, d]);
   const H = ({ children }: { children: React.ReactNode }) => <h2 className="text-lg font-semibold text-zinc-900 border-b border-zinc-300 pb-1 mt-6 mb-2">{children}</h2>;
   const Row = ({ k, v }: { k: string; v: React.ReactNode }) => <tr><td className="py-0.5 pr-4 text-zinc-500 align-top">{k}</td><td className="py-0.5 text-zinc-900">{v}</td></tr>;
 
@@ -60,7 +63,7 @@ export default function Report({ name, site, objects, features, stats, units, im
         {c && (<>
           <H>Climate</H>
           <table className="text-sm"><tbody>
-            <Row k="Hardiness zone" v={`${c.zone?.label ?? '?'} (average coldest night ${c.meanAnnualMinC != null ? fmtTemp(c.meanAnnualMinC, units) : '?'})`} />
+            <Row k="Hardiness zone" v={`${sc?.zoneLabel ?? c.zone?.label ?? '?'} (average coldest night ${c.meanAnnualMinC != null ? fmtTemp(c.meanAnnualMinC, units) : '?'})`} />
             <Row k="Rainfall" v={`${fmtRain(c.annualPrecipMm, units)} a year`} />
             <Row k="Frost" v={c.frostFree ? 'Frost free' : `last in spring around ${c.lastSpringFrost}, first in fall around ${c.firstFallFrost}, ${c.growingSeasonDays} day season`} />
             <Row k="Source" v={`${c.source}, ${c.period}`} />
@@ -89,7 +92,26 @@ export default function Report({ name, site, objects, features, stats, units, im
           <Row k="Pond storage" v={fmtWater(d.pondL, units)} />
           <Row k="Swales" v={`${fmtLen(d.swaleLen, units, 0)} holding about ${fmtWater(d.swaleL, units)} per fill`} />
           <Row k="Earthworks" v={`cut ${fmtVol(stats.cutM3, units)}, fill ${fmtVol(stats.fillM3, units)}`} />
+          {wb && wb.canopyM2 > 0 && <Row k="Irrigation need when grown" v={`${fmtWater(wb.yearNeedL, units)} a year beyond rain; ${wb.yearShortL > 1 ? `${fmtWater(wb.yearShortL, units)} short with these tanks, about ${fmtWater(wb.tankForDriestRunL, units)} of tanks would carry the driest run` : 'the tanks cover it'}`} />}
         </tbody></table>
+
+        <H>Design review: {review.overall} of 100</H>
+        <table className="text-sm"><tbody>
+          {review.areas.map((a) => <Row key={a.id} k={`${a.name} (${a.score})`} v={a.findings.filter((f) => f.level !== 'good').map((f) => f.text).join(' ') || 'All checks met.'} />)}
+        </tbody></table>
+
+        {plants.length > 0 && (() => {
+          const by: Record<string, { n: number; cost: number }> = {};
+          for (const p of plants) { const sp = SPECIES_BY_ID[p.species || '']; if (!sp) continue; by[sp.id] = by[sp.id] || { n: 0, cost: 0 }; by[sp.id].n++; by[sp.id].cost += p.cost ?? sp.costUSD; }
+          const rows = Object.entries(by).sort((a, b) => b[1].n - a[1].n);
+          return (<>
+            <H>Shopping list ({rows.length} kinds, about ${Math.round(rows.reduce((t, [, v]) => t + v.cost, 0)).toLocaleString()})</H>
+            <table className="w-full text-xs"><thead><tr className="text-left text-zinc-500"><th className="py-1">Plant</th><th>How</th><th className="text-right">Count</th><th className="text-right">About</th></tr></thead>
+              <tbody>{rows.map(([id, v]) => { const sp = SPECIES_BY_ID[id]; return (
+                <tr key={id} className="border-b border-zinc-100"><td className="py-0.5">{sp.name} <i className="text-zinc-400">{sp.latin}</i></td><td>{sp.stock || (sp.life === 'annual' ? 'seed or seedling' : 'potted plant')}</td><td className="text-right">{v.n}</td><td className="text-right">${Math.round(v.cost).toLocaleString()}</td></tr>
+              ); })}</tbody></table>
+          </>);
+        })()}
 
         {plants.length > 0 && (<>
           <H>Planting schedule ({plants.length})</H>
@@ -136,11 +158,11 @@ export default function Report({ name, site, objects, features, stats, units, im
         </>)}
 
         {features.length > 0 && (<>
-          <H>Zones, paths and earthworks</H>
+          <H>Zones, paddocks, sectors, paths and earthworks</H>
           <table className="w-full text-xs"><tbody>{features.map((f) => (
             <tr key={f.id} className="border-b border-zinc-100"><td className="py-0.5">{f.name}</td>
-              <td>{f.kind === 'zone' ? ZONE_NAMES[f.zone ?? 1] : f.kind}</td>
-              <td>{f.kind === 'zone' ? fmtArea(polygonArea(f.points), units) : fmtLen(polylineLength(f.points), units, 0)}</td>
+              <td>{f.kind === 'zone' ? ZONE_NAMES[f.zone ?? 1] : f.kind === 'paddock' ? `paddock, ${f.head ?? ''} ${ANIMALS[f.animal || 'chickens'].label.toLowerCase()}` : f.kind === 'sector' ? `sector from ${Math.round(bearing(f.points[0], f.points[1]))}°` : f.kind}</td>
+              <td>{f.kind === 'zone' || f.kind === 'paddock' ? fmtArea(polygonArea(f.points), units) : f.kind === 'sector' ? `${f.spread ?? ''}° wide` : fmtLen(polylineLength(f.points), units, 0)}</td>
               <td>{f.notes}</td></tr>
           ))}</tbody></table>
         </>)}

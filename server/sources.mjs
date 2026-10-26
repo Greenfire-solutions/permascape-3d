@@ -265,10 +265,52 @@ export function makeSources(cacheDir) {
     });
   }
 
-  return { geocode, reverse, terrain, tile, climate, soil, wildPlants };
+  /** Wind rose from five years of daily dominant wind direction and peak speed. */
+  async function wind(lat, lon) {
+    const key = `${lat.toFixed(2)},${lon.toFixed(2)}`;
+    return cachedJson('wind', key, async () => {
+      const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}` +
+        '&start_date=2020-01-01&end_date=2024-12-31&daily=wind_direction_10m_dominant,wind_speed_10m_max&wind_speed_unit=kmh&timezone=auto';
+      const j = await retry(async () => {
+        const r = await fetch(url, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(45000) });
+        if (!r.ok) throw new Error(`wind service answered ${r.status}`);
+        return r.json();
+      });
+      return windRose(j.daily, lat);
+    });
+  }
+
+  return { geocode, reverse, terrain, tile, climate, soil, wildPlants, wind };
 }
 
 /** "40.1, -105.2", "40.1 -105.2" or a Google Maps link with @lat,lon. */
+/**
+ * Sixteen-point wind rose: share of days the wind came FROM each direction, all year, in the
+ * cold half and the warm half of the year, plus the mean peak speed from each direction.
+ */
+export function windRose(daily, lat) {
+  const blank = () => new Array(16).fill(0);
+  const all = blank(), cold = blank(), warm = blank(), speed = blank(), strong = blank();
+  let n = 0, nc = 0, nw = 0;
+  const coldMonths = lat >= 0 ? [11, 12, 1, 2, 3] : [5, 6, 7, 8, 9];
+  (daily?.time || []).forEach((t, i) => {
+    const d = daily.wind_direction_10m_dominant[i], v = daily.wind_speed_10m_max[i];
+    if (d == null || v == null) return;
+    const k = Math.round(d / 22.5) % 16, m = Number(t.slice(5, 7));
+    all[k]++; speed[k] += v; n++;
+    if (v >= 35) strong[k]++;
+    if (coldMonths.includes(m)) { cold[k]++; nc++; } else { warm[k]++; nw++; }
+  });
+  const peak = (a) => a.indexOf(Math.max(...a)) * 22.5;
+  return {
+    days: n,
+    all: all.map((v) => v / (n || 1)), cold: cold.map((v) => v / (nc || 1)), warm: warm.map((v) => v / (nw || 1)),
+    meanPeakKmh: speed.map((s, k) => (all[k] ? s / all[k] : 0)), strongDays: strong,
+    prevailing: peak(all), prevailingCold: peak(cold), prevailingWarm: peak(warm), strongest: peak(strong),
+    source: 'Open-Meteo ERA5 reanalysis, daily dominant wind 2020 to 2024',
+  };
+}
+
 export function parseCoordinates(q) {
   const s = String(q).trim();
   const at = s.match(/@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/);

@@ -13,12 +13,17 @@ import { ModelContext, plantSize } from '../lib/models';
 import { uid } from '../lib/api';
 import { advise, rangesText, SiteClimate, doyLabel } from '../lib/advisor';
 import type { Tool, WaterSettings } from './Viewport3D';
-import { SidebarPanel, Slider, Field, inputCls, Toggle, Btn, Stat, ConfirmBtn } from './ui';
+import { SidebarPanel, Slider, Field, inputCls, Toggle, Btn, Stat, ConfirmBtn, Segmented } from './ui';
+import { guildSpecies, hedgeSpecies, SECTOR_STYLE, ANIMALS, bearing, effectiveZone } from '../lib/permaculture';
+import { Compass, Fence, PawPrint, Rows3, Trees, TreeDeciduous } from 'lucide-react';
+import type { Animal, SectorType } from '../lib/types';
 
 export interface ToolOpts {
   brushSize: number; brushStrength: number; flattenHeight: number;
   bermWidth: number; bermHeight: number; swaleWidth: number; swaleDepth: number; withBerm: boolean; swaleLength: number;
   pathWidth: number; zoneNumber: number; species: string;
+  guildTree: string; hedgeTall: string; hedgeLow: string; sectorType: SectorType; sectorSpread: number;
+  keylineSpacing: number; keylineCount: number; paddockAnimal: Animal; paddockHead: number;
   buildingW: number; buildingD: number; buildingH: number; tankL: number; pondR: number; pondDepth: number; gardenW: number; gardenD: number;
 }
 
@@ -26,10 +31,12 @@ export const DEFAULT_TOOL_OPTS: ToolOpts = {
   brushSize: 8, brushStrength: 40, flattenHeight: 0,
   bermWidth: 2, bermHeight: 0.6, swaleWidth: 1.2, swaleDepth: 0.5, withBerm: true, swaleLength: 40,
   pathWidth: 1.5, zoneNumber: 1, species: 'apple',
+  guildTree: 'apple', hedgeTall: '', hedgeLow: '', sectorType: 'wind', sectorSpread: 50, keylineSpacing: 8, keylineCount: 4, paddockAnimal: 'chickens', paddockHead: 6,
   buildingW: 8, buildingD: 10, buildingH: 3, tankL: 10000, pondR: 6, pondDepth: 1.5, gardenW: 1.2, gardenD: 4,
 };
 
 const TYPE_NAMES: Record<string, string> = {
+  guild: 'Tree guild', hedge: 'Hedgerow', fence: 'Fence', keyline: 'Keyline pattern', sector: 'Sector', paddock: 'Paddock',
   plant: 'Plant', building: 'Building', greenhouse: 'Greenhouse', tank: 'Water tank', pond: 'Pond', garden: 'Garden bed',
   compost: 'Compost bays', coop: 'Chicken coop', hive: 'Beehive', irrigation: 'Irrigation emitter',
 };
@@ -100,6 +107,87 @@ export function ToolPanel({ tool, o, set, water, setWater, units, site, grid }: 
     <SidebarPanel title="Measure" icon={Ruler}><p className="text-xs text-zinc-400">Click two points. You get the distance along the ground, the rise or fall, and the grade between them.</p></SidebarPanel>
   );
   if (tool === 'plant') return <PlantPicker o={o} set={set} site={site} />;
+  const zone = effectiveZone(site);
+  if (tool === 'guild') {
+    const centres = SPECIES.filter((sp) => ['fruit-tree', 'nut-tree'].includes(sp.category) && sp.life === 'perennial').sort((a, b) => a.name.localeCompare(b.name));
+    const c = SPECIES_BY_ID[o.guildTree];
+    const members = c ? guildSpecies(c, zone) : [];
+    return (
+      <SidebarPanel title="Tree guild" icon={TreeDeciduous}>
+        <Field label="Centre tree">
+          <select value={o.guildTree} onChange={(e) => set({ guildTree: e.target.value })} className={inputCls}>
+            {centres.map((sp) => <option key={sp.id} value={sp.id}>{sp.name}{zoneFit(sp, zone).ok ? '' : ' (outside your zone)'}</option>)}
+          </select>
+        </Field>
+        <div className="space-y-1.5">
+          {members.map((m) => (
+            <div key={m.role} className="flex items-center gap-2 text-xs">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: m.species.leaf }} />
+              <span className="text-zinc-200 flex-1">{m.species.name} <span className="text-zinc-500">x{m.count}</span></span>
+              <span className="text-zinc-500">{m.role}</span>
+            </div>
+          ))}
+          {!members.length && <div className="text-xs text-zinc-500">No support plants fit this climate.</div>}
+        </div>
+        <p className="text-xs text-zinc-500">Click the land: the tree goes in with its nitrogen fixers, nutrient miners, insect plants, pest confusers and living mulch around the drip line, all suited to your zone.</p>
+      </SidebarPanel>
+    );
+  }
+  if (tool === 'hedge') {
+    const auto = hedgeSpecies(zone);
+    const tallOpts = SPECIES.filter((sp) => sp.life === 'perennial' && sp.heightM >= 4).sort((a, b) => a.name.localeCompare(b.name));
+    const lowOpts = SPECIES.filter((sp) => sp.life === 'perennial' && sp.layer === 'shrub').sort((a, b) => a.name.localeCompare(b.name));
+    return (
+      <SidebarPanel title="Hedgerow and windbreak" icon={Trees}>
+        <Field label="Tall row">
+          <select value={o.hedgeTall} onChange={(e) => set({ hedgeTall: e.target.value })} className={inputCls}>
+            <option value="">Best for my site ({auto.tall?.name ?? 'none'})</option>
+            {tallOpts.map((sp) => <option key={sp.id} value={sp.id}>{sp.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Shrub row">
+          <select value={o.hedgeLow} onChange={(e) => set({ hedgeLow: e.target.value })} className={inputCls}>
+            <option value="">Best for my site ({auto.low?.name ?? 'none'})</option>
+            {lowOpts.map((sp) => <option key={sp.id} value={sp.id}>{sp.name}</option>)}
+          </select>
+        </Field>
+        <p className="text-xs text-zinc-500">Drag a line across the wind. A windbreak shelters about ten times its height downwind; put it on the side your wind sector comes from.</p>
+      </SidebarPanel>
+    );
+  }
+  if (tool === 'fence') return (
+    <SidebarPanel title="Fence" icon={Fence}><p className="text-xs text-zinc-400">Drag along the line. Posts are drawn every 2.5 m and the length shows when you select it, for ordering wire and posts.</p></SidebarPanel>
+  );
+  if (tool === 'keyline') return (
+    <SidebarPanel title="Keyline pattern" icon={Rows3}>
+      <Slider label="Line spacing" value={o.keylineSpacing} min={2} max={30} step={0.5} onChange={(v) => set({ keylineSpacing: v })} display={L(o.keylineSpacing)} />
+      <Slider label="Lines each side" value={o.keylineCount} min={1} max={12} onChange={(v) => set({ keylineCount: v })} />
+      <Slider label="Length" value={o.swaleLength} min={10} max={Math.max(60, Math.round(grid.size * 1.5))} onChange={(v) => set({ swaleLength: v })} display={L(o.swaleLength)} />
+      <p className="text-xs text-zinc-500">Click the keypoint: where a valley's slope changes from convex to concave. The keyline follows the contour there and the rest run parallel, drifting off contour so ripping or planting along them moves water from valley to ridge.</p>
+    </SidebarPanel>
+  );
+  if (tool === 'sector') return (
+    <SidebarPanel title="Sector" icon={Compass}>
+      <Field label="What comes in">
+        <select value={o.sectorType} onChange={(e) => { const t = e.target.value as SectorType; set({ sectorType: t, sectorSpread: SECTOR_STYLE[t].spread || o.sectorSpread }); }} className={inputCls}>
+          {Object.entries(SECTOR_STYLE).filter(([k]) => !k.startsWith('sun')).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+        </select>
+      </Field>
+      <Slider label="Width of the wedge" value={o.sectorSpread} min={10} max={180} onChange={(v) => set({ sectorSpread: v })} display={`${o.sectorSpread}°`} />
+      <p className="text-xs text-zinc-500">Drag from the home outward toward where it comes from. Sun sectors and the measured wind come from the Sectors button in Analyze.</p>
+    </SidebarPanel>
+  );
+  if (tool === 'paddock') return (
+    <SidebarPanel title="Paddock" icon={PawPrint}>
+      <Field label="Animals">
+        <select value={o.paddockAnimal} onChange={(e) => set({ paddockAnimal: e.target.value as Animal })} className={inputCls}>
+          {(Object.keys(ANIMALS) as Animal[]).filter((a) => a !== 'bees').map((a) => <option key={a} value={a}>{ANIMALS[a].label}</option>)}
+        </select>
+      </Field>
+      <Slider label="How many" value={o.paddockHead} min={1} max={200} onChange={(v) => set({ paddockHead: v })} />
+      <p className="text-xs text-zinc-500">{ANIMALS[o.paddockAnimal].note} Click corners like a zone; double-click or Enter to close.</p>
+    </SidebarPanel>
+  );
   if (['building', 'greenhouse', 'garden'].includes(tool)) return (
     <SidebarPanel title={typeName(tool)} icon={Home}>
       {tool === 'garden' ? (
@@ -139,7 +227,7 @@ export function ToolPanel({ tool, o, set, water, setWater, units, site, grid }: 
 function PlantPicker({ o, set, site }: { o: ToolOpts; set: (p: Partial<ToolOpts>) => void; site: Site }) {
   const [q, setQ] = useState('');
   const [layer, setLayer] = useState<Layer | 'all'>('all');
-  const zone = site.climate?.zone?.zone;
+  const zone = effectiveZone(site);
   const list = SPECIES.filter((s) => (layer === 'all' || s.layer === layer) && (!q || (s.name + s.latin + s.functions.join(' ')).toLowerCase().includes(q.toLowerCase())));
   const sel = SPECIES_BY_ID[o.species];
   const fit = zoneFit(sel, zone);
@@ -220,7 +308,7 @@ export function ObjectPanel({ o, onChange, onDelete, onDuplicate, site, units, c
   const cropId = o.type === 'garden' ? o.crop : o.type === 'plant' ? o.species : undefined;
   const calendar = useMemo(() => (sc && cropId && SPECIES_BY_ID[cropId] ? advise(SPECIES_BY_ID[cropId], sc, null, o.type === 'garden' ? 1 : 2, site.soil) : null), [sc, cropId, site.soil]);
   const sp = o.type === 'plant' ? SPECIES_BY_ID[o.species || ''] : null;
-  const zone = site.climate?.zone?.zone;
+  const zone = effectiveZone(site);
   const L = (m: number) => fmtLen(m, units);
   const [evType, setEvType] = useState<JournalEvent['type']>('watered');
   const [evText, setEvText] = useState('');
@@ -330,9 +418,9 @@ export function ObjectPanel({ o, onChange, onDelete, onDuplicate, site, units, c
 // ------------------------------------------------------------------ selected feature
 export function FeaturePanel({ f, onChange, onDelete, units, onGuide, hasClimate }: { f: Feature; onChange: (p: Partial<Feature>) => void; onDelete: () => void; units: Units; onGuide?: () => void; hasClimate?: boolean }) {
   const len = polylineLength(f.points);
-  const title = { path: 'Path', zone: 'Zone', swale: 'Swale', berm: 'Berm' }[f.kind];
+  const title = { path: 'Path', zone: 'Zone', swale: 'Swale', berm: 'Berm', fence: 'Fence', keyline: 'Keyline', sector: 'Sector', paddock: 'Paddock' }[f.kind];
   return (
-    <SidebarPanel title={`Selected: ${title}`} icon={f.kind === 'zone' ? Hexagon : f.kind === 'path' ? Route : Waves}>
+    <SidebarPanel title={`Selected: ${title}`} icon={f.kind === 'zone' ? Hexagon : f.kind === 'path' ? Route : f.kind === 'fence' ? Fence : f.kind === 'sector' ? Compass : f.kind === 'paddock' ? PawPrint : f.kind === 'keyline' ? Rows3 : Waves}>
       <Field label="Name"><input value={f.name} onChange={(e) => onChange({ name: e.target.value })} className={inputCls} /></Field>
       {f.kind === 'zone' && (
         <>
@@ -358,6 +446,40 @@ export function FeaturePanel({ f, onChange, onDelete, units, onGuide, hasClimate
           <p className="text-xs text-zinc-500">This is the record of the earthwork. Deleting it keeps the shaped ground; use Undo to take the digging back.</p>
         </>
       )}
+      {f.kind === 'fence' && <Stat label="Length" value={fmtLen(len, units)} sub={`about ${Math.ceil(len / 2.5) + 1} posts at 2.5 m`} />}
+      {f.kind === 'keyline' && <Stat label="Length" value={fmtLen(len, units)} sub="Rip, plant or swale along it" />}
+      {f.kind === 'sector' && (
+        <>
+          <Field label="What comes in">
+            <select value={f.sector || 'wind'} onChange={(e) => onChange({ sector: e.target.value as SectorType })} className={inputCls}>
+              {Object.entries(SECTOR_STYLE).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            </select>
+          </Field>
+          <Slider label="Width of the wedge" value={f.spread ?? 50} min={10} max={300} onChange={(v) => onChange({ spread: v })} display={`${f.spread ?? 50}°`} />
+          {f.points.length >= 2 && <Stat label="Comes from" value={`${Math.round(bearing(f.points[0], f.points[1]))}° ${COMPASS[Math.round(bearing(f.points[0], f.points[1]) / 45) % 8]}`} />}
+        </>
+      )}
+      {f.kind === 'paddock' && (() => {
+        const a = polygonArea(f.points), an = ANIMALS[f.animal || 'chickens'];
+        const need = (f.head ?? 0) * an.m2Each;
+        return (
+          <>
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="Animals">
+                <select value={f.animal || 'chickens'} onChange={(e) => onChange({ animal: e.target.value as Animal })} className={inputCls}>
+                  {(Object.keys(ANIMALS) as Animal[]).filter((k) => k !== 'bees').map((k) => <option key={k} value={k}>{ANIMALS[k].label}</option>)}
+                </select>
+              </Field>
+              <Field label="How many"><input type="number" min={0} value={f.head ?? 0} onChange={(e) => onChange({ head: Math.max(0, Number(e.target.value)) })} className={inputCls} /></Field>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Stat label="Area" value={fmtArea(a, units)} sub={need ? `${Math.round((a / need) * 100)}% of what they need` : ''} />
+              <Stat label="Rest between grazes" value={`${f.restDays ?? an.restDays} days`} sub={need > a ? `Split into ${Math.ceil(need / Math.max(1, a))}+ paddocks and rotate` : 'Room enough to rotate'} />
+            </div>
+            <p className="text-xs text-zinc-500">{an.note}</p>
+          </>
+        );
+      })()}
       <Field label="Notes"><textarea value={f.notes || ''} onChange={(e) => onChange({ notes: e.target.value })} rows={2} className={inputCls} /></Field>
       <Btn kind="danger" className="w-full" onClick={onDelete}><Trash2 size={13} /> Delete</Btn>
     </SidebarPanel>
@@ -369,7 +491,7 @@ export function SitePanel({ site, units, stats, onResurvey, sc, onEditClimate }:
   const c = site.climate, s = site.soil;
   const maxP = c ? Math.max(1, ...c.monthlyPrecipMm) : 1;
   return (
-    <SidebarPanel title="Site" icon={MapPin} defaultOpen={false}>
+    <SidebarPanel title="Site" icon={MapPin}>
       {site.lat != null ? (
         <div className="text-xs text-zinc-300">{site.address}<div className="font-mono text-zinc-500">{site.lat.toFixed(5)}, {site.lon!.toFixed(5)}</div></div>
       ) : <div className="text-xs text-zinc-400">Flat sandbox. Use File, New site from address to load real land.</div>}
@@ -449,12 +571,12 @@ const OVERLAYS: { id: Overlay; label: string }[] = [
   { id: 'elevation', label: 'Elevation' }, { id: 'flow', label: 'Water flow' }, { id: 'sun', label: 'Sun hours' },
 ];
 
-export function AnalysisPanel({ s, set, busy, sunInfo, units }: { s: Settings; set: (p: Partial<Settings>) => void; busy: string | null; sunInfo: string; units: Units }) {
+export function AnalysisPanel({ s, set, busy, sunInfo, units, extra }: { s: Settings; set: (p: Partial<Settings>) => void; busy: string | null; sunInfo: string; units: Units; extra?: React.ReactNode }) {
   return (
     <SidebarPanel title="Analysis" icon={Activity} right={busy ? <span className="text-[10px] text-emerald-400">{busy}</span> : null}>
-      <div className="grid grid-cols-3 gap-1">
+      <div className="grid grid-cols-3 gap-1.5">
         {OVERLAYS.map((o) => (
-          <button key={o.id} onClick={() => set({ overlay: o.id })} className={`px-1.5 py-1.5 rounded text-[11px] border ${s.overlay === o.id ? 'bg-emerald-600/20 border-emerald-600 text-emerald-300' : 'border-zinc-800 text-zinc-400 hover:bg-zinc-900'}`}>{o.label}</button>
+          <button key={o.id} onClick={() => set({ overlay: o.id })} className={`px-1.5 py-2 rounded-xl text-[11px] font-medium border transition-all ${s.overlay === o.id ? 'bg-emerald-400/15 border-emerald-400/60 text-emerald-200' : 'border-white/[0.07] text-zinc-300 hover:bg-white/[0.04]'}`}>{o.label}</button>
         ))}
       </div>
       {s.overlay !== 'none' && <Slider label="Overlay strength" value={s.overlayOpacity} min={0.1} max={1} step={0.05} onChange={(v) => set({ overlayOpacity: v })} display={`${Math.round(s.overlayOpacity * 100)}%`} />}
@@ -474,6 +596,7 @@ export function AnalysisPanel({ s, set, busy, sunInfo, units }: { s: Settings; s
           </Field>
         )}
       </div>
+      {extra}
     </SidebarPanel>
   );
 }
@@ -481,12 +604,12 @@ export function AnalysisPanel({ s, set, busy, sunInfo, units }: { s: Settings; s
 // ------------------------------------------------------------------ layers and display
 const LAYER_LABELS: Record<LayerId, string> = {
   plants: 'Trees and plants', structures: 'Buildings and structures', gardens: 'Garden beds', water: 'Ponds, tanks, irrigation',
-  paths: 'Paths', zones: 'Zones', earthworks: 'Earthwork lines',
+  paths: 'Paths and fences', zones: 'Zones and paddocks', earthworks: 'Earthworks and keylines', sectors: 'Sectors',
 };
 
 export function LayersPanel({ s, set, counts, hasSatellite, onClearAll }: { s: Settings; set: (p: Partial<Settings>) => void; counts: Record<LayerId, number>; hasSatellite: boolean; onClearAll: () => void }) {
   return (
-    <SidebarPanel title="Layers and display" icon={Layers} defaultOpen={false}>
+    <SidebarPanel title="Layers and display" icon={Layers}>
       <div className="space-y-1.5">
         {(Object.keys(LAYER_LABELS) as LayerId[]).map((k) => (
           <div key={k} className="flex items-center gap-2">
@@ -501,11 +624,7 @@ export function LayersPanel({ s, set, counts, hasSatellite, onClearAll }: { s: S
         {s.satellite && hasSatellite && <Slider label="Photo opacity" value={s.imageOpacity} min={0} max={1} step={0.05} onChange={(v) => set({ imageOpacity: v })} display={`${Math.round(s.imageOpacity * 100)}%`} />}
         <Toggle id="grid" label="Measuring grid" checked={s.grid} onChange={(v) => set({ grid: v })} />
         <Slider label="Vertical exaggeration" value={s.exaggeration} min={0.5} max={5} step={0.1} onChange={(v) => set({ exaggeration: v })} display={`${s.exaggeration.toFixed(1)}x`} />
-        <div className="flex gap-2">
-          {(['imperial', 'metric'] as const).map((u) => (
-            <button key={u} onClick={() => set({ units: u })} className={`flex-1 py-1 rounded text-xs border ${s.units === u ? 'border-emerald-600 bg-emerald-600/15 text-emerald-300' : 'border-zinc-800 text-zinc-400'}`}>{u === 'imperial' ? 'Feet, acres, gallons' : 'Metres, hectares, litres'}</button>
-          ))}
-        </div>
+        <Segmented value={s.units} onChange={(u) => set({ units: u })} options={[{ id: 'imperial', label: 'Feet, acres, gallons' }, { id: 'metric', label: 'Metres, hectares, litres' }]} />
       </div>
       <ConfirmBtn className="w-full" confirmText="Click again: removes all elements, zones and paths" onConfirm={onClearAll}><Trash2 size={13} /> Clear all placed elements</ConfirmBtn>
     </SidebarPanel>
@@ -519,7 +638,7 @@ export function TasksPanel({ objects, ctx, viewDay, onToggle, onSelect, sc }: { 
   const recent = useMemo(() => objects.flatMap((o) => o.events.map((e) => ({ ...e, obj: o }))).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 12), [objects]);
   const done = tasks.filter((t) => t.done).length;
   return (
-    <SidebarPanel title="Tasks and journal" icon={ListChecks} defaultOpen={false} right={tasks.length ? <span className="text-[10px] text-zinc-400">{done}/{tasks.length}</span> : null}>
+    <SidebarPanel title="Tasks and journal" icon={ListChecks} right={tasks.length ? <span className="text-[10px] text-zinc-400">{done}/{tasks.length}</span> : null}>
       <div className="text-xs text-zinc-500">Jobs for {month}, worked out from each plant's own calendar and your site's climate. Move the timeline to plan another month.</div>
       {tasks.length === 0 ? <div className="text-xs text-zinc-600">{objects.length ? 'Nothing due this month.' : 'Place plants and structures and their jobs show up here.'}</div> : (
         <div className="space-y-1 max-h-64 overflow-y-auto scroll-thin">
@@ -551,7 +670,7 @@ export function SummaryPanel({ site, objects, features, stats, units, onReport }
   const d = useMemo(() => designSummary(site, objects, features), [site, objects, features]);
   const W = (l: number | null) => (l == null ? 'needs an address' : fmtWater(l, units));
   return (
-    <SidebarPanel title="Design summary" icon={BarChart3} defaultOpen={false}>
+    <SidebarPanel title="Design summary" icon={BarChart3}>
       <div className="grid grid-cols-2 gap-2">
         <Stat label="Plants" value={d.plants} sub={d.zoneMisfits ? `${d.zoneMisfits} outside the zone` : 'all fit the zone'} />
         <Stat label="Plant budget" value={`$${Math.round(d.plantCost).toLocaleString()}`} sub={d.otherCost ? `+ $${Math.round(d.otherCost).toLocaleString()} other` : ''} />

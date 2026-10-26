@@ -12,6 +12,8 @@
     "e2e": "node test/e2e.mjs"
   },
   "dependencies": {
+    "@fontsource-variable/fraunces": "^5.1.0",
+    "@fontsource-variable/inter": "^5.1.0",
     "lucide-react": "0.468.0",
     "pngjs": "7.0.0",
     "react": "18.3.1",

@@ -3,6 +3,7 @@ import { SPECIES_BY_ID, LAYER_NAMES, Layer, seasonalMonth, zoneFit } from './pla
 import { polygonArea, polylineLength } from './terrain';
 import { plantAge, ModelContext } from './models';
 import { advise, jobsBetween, SiteClimate } from './advisor';
+import { effectiveZone } from './permaculture';
 
 export function designSummary(site: Site, objects: SiteObject[], features: Feature[]) {
   const precip = site.climate?.annualPrecipMm ?? null;
@@ -15,7 +16,7 @@ export function designSummary(site: Site, objects: SiteObject[], features: Featu
     if (!sp) continue;
     byLayer[sp.layer] = (byLayer[sp.layer] || 0) + 1;
     plantCost += p.cost ?? sp.costUSD;
-    if (!zoneFit(sp, site.climate?.zone?.zone).ok) zoneMisfits++;
+    if (!zoneFit(sp, effectiveZone(site)).ok) zoneMisfits++;
   }
   const otherCost = objects.filter((o) => o.type !== 'plant').reduce((s, o) => s + (o.cost || 0), 0);
   const roofM2 = objects.filter((o) => ['building', 'greenhouse', 'coop'].includes(o.type))

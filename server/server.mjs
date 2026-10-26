@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeSources } from './sources.mjs';
+import { askClaude, claudeBinary } from './ai.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.PERMASCAPE_PORT || 8140);
@@ -76,6 +77,25 @@ async function api(req, res, url) {
 
   if (p === '/api/climate') return send(res, 200, await sources.climate(num(q.get('lat'), -90, 90), num(q.get('lon'), -180, 180)));
   if (p === '/api/wildplants') return send(res, 200, await sources.wildPlants(num(q.get('lat'), -90, 90), num(q.get('lon'), -180, 180)));
+  if (p === '/api/wind') return send(res, 200, await sources.wind(num(q.get('lat'), -90, 90), num(q.get('lon'), -180, 180)));
+
+  if (p === '/api/ai/status') return send(res, 200, { available: !!claudeBinary(), engine: 'Claude Code on this Mac' });
+  if (p === '/api/ai' && req.method === 'POST') {
+    const body = JSON.parse(await readBody(req, 2 * 1024 * 1024));
+    const mode = body.mode === 'design' ? 'design' : 'ask';
+    const question = String(body.question || '').slice(0, 4000);
+    if (mode === 'ask' && !question.trim()) return send(res, 400, { error: 'Type a question first.' });
+    if (process.env.PERMASCAPE_FAKE_AI) {
+      // tests: a canned, well-formed proposal so the whole apply path runs without a Claude call
+      return send(res, 200, { answer: `Test answer for: ${question || mode}`, actions: [
+        { kind: 'zone', label: 'Zone 1: kitchen garden', why: 'Next to the door', zone: 1, points: [[-6, -6], [6, -6], [6, 6], [-6, 6]] },
+        { kind: 'guild', label: 'Apple guild', why: 'Sunny and sheltered', species: 'apple', x: 12, y: 10 },
+        { kind: 'structure', label: 'Rain tank', why: 'Catch the roof', structure: 'tank', x: -10, y: 8, size: 8000 },
+        { kind: 'swale', label: 'Upper swale', why: 'Slow the runoff', x: 0, y: 15, size: 30 },
+      ], seconds: 0 });
+    }
+    return send(res, 200, await askClaude({ mode, question, context: body.context, model: body.model }));
+  }
   if (p === '/api/soil') return send(res, 200, await sources.soil(num(q.get('lat'), -90, 90), num(q.get('lon'), -180, 180)));
 
   if (p === '/api/projects' && req.method === 'GET') {
