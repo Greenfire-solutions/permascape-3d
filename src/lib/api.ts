@@ -1,4 +1,4 @@
-import type { Climate, Soil, Project } from './types';
+import type { Climate, Soil, Project, Surroundings } from './types';
 
 async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, init);
@@ -96,4 +96,19 @@ export async function fetchImagery(lat: number, lon: number, size: number, onPro
   out.width = out.height = 2048;
   out.getContext('2d')!.drawImage(mosaic, ax - tx0 * 256, ay - ty0 * 256, bx - ax, by - ay, 0, 0, 2048, 2048);
   return out;
+}
+
+export const fetchSurroundings = (lat: number, lon: number, size: number) => getJson<Surroundings>(`/api/surroundings?lat=${lat}&lon=${lon}&size=${size}`);
+export interface Forecast { days: { date: string; minC: number; maxC: number; rainMm: number; gustKmh: number }[]; alerts: { event: string; headline: string; ends: string }[]; source: string }
+export const fetchForecast = (lat: number, lon: number) => getJson<Forecast>(`/api/forecast?lat=${lat}&lon=${lon}`);
+export interface Profile { designer?: string; business?: string; contact?: string; website?: string }
+export const fetchProfile = () => getJson<Profile>('/api/profile');
+export const saveProfile = (p: Profile) => getJson<Profile>('/api/profile', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(p) });
+
+/** One call to Permie in any mode, with the server's friendly errors passed through. */
+export async function askPermie(body: { mode: 'design' | 'ask' | 'critic' | 'brief' | 'proposal'; question?: string; context?: any; model?: string; proposal?: any[] }) {
+  const r = await fetch('/api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `Permie answered ${r.status}`);
+  return j as { answer: string; actions?: any[]; drop?: number[]; brief?: any; seconds?: number };
 }

@@ -100,7 +100,7 @@ test('the water budget: evaporation in a plausible range, roof water fills tanks
 
 test('the design review rewards water, diversity and zones, and every weak spot names a next step', () => {
   const empty = P.reviewDesign({ site: site(), objects: [], features: [], zone: 8, meanSlope: 8, cutM3: 0, fillM3: 0, roofCatchL: null });
-  assert.equal(empty.areas.length, 5);
+  assert.equal(empty.areas.length, 6);
   const water = empty.areas.find((a) => a.id === 'water');
   assert.ok(water.findings.some((f) => f.fix === 'swales'), 'a sloping site with no swales is told to dig one');
   const g = slope();

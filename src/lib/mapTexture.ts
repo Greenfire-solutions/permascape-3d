@@ -1,6 +1,6 @@
 // Everything drawn flat on the ground goes into one canvas that becomes the terrain texture:
 // satellite photo or hillshade, the analysis overlay, contours, zones, paths and earthwork lines.
-import type { Feature, Settings } from './types';
+import type { Feature, Settings, Surroundings } from './types';
 import { Grid, contourSegments, slopeGrid, SLOPE_CLASSES, gradientAt } from './terrain';
 import { SECTOR_STYLE, ANIMALS } from './permaculture';
 
@@ -33,9 +33,19 @@ export function computeAnalysis(g: Grid, overlay: Settings['overlay'], prev: Ana
   return out;
 }
 
+/** Soil map units get their own colour, picked by drainage: wet soils blue, dry soils warm. */
+export function soilColor(drainage: string | null, i: number) {
+  const d = (drainage || '').toLowerCase();
+  if (/very poorly|poorly/.test(d) && !/moderately/.test(d)) return '#2563eb';
+  if (/somewhat poorly/.test(d)) return '#0ea5e9';
+  if (/moderately well/.test(d)) return '#14b8a6';
+  if (/excessively/.test(d)) return '#f97316';
+  return ['#84cc16', '#eab308', '#a855f7', '#ec4899', '#22c55e', '#f59e0b'][i % 6];
+}
+
 export function composeMap(
   canvas: HTMLCanvasElement, g: Grid, satellite: HTMLCanvasElement | null, s: Settings, a: Analysis,
-  features: Feature[], selectedId: string | null,
+  features: Feature[], selectedId: string | null, ref?: Surroundings | null,
 ) {
   if (canvas.width !== TEX) canvas.width = canvas.height = TEX;
   const ctx = canvas.getContext('2d')!;
@@ -97,6 +107,32 @@ export function composeMap(
     ctx.globalAlpha = 1;
   }
 
+  const toPx0 = (x: number, y: number): [number, number] => [((x + g.size / 2) / g.size) * W, ((g.size / 2 - y) / g.size) * W];
+  const ring = (pts: [number, number][]) => { ctx.beginPath(); pts.forEach(([x, y], i) => { const [px, py] = toPx0(x, y); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); }); ctx.closePath(); };
+  const hatch = (color: string, gap: number, dir = 1) => { ctx.save(); ctx.clip(); ctx.strokeStyle = color; ctx.lineWidth = 3; for (let k = -W; k < W * 2; k += gap) { ctx.beginPath(); ctx.moveTo(k, 0); ctx.lineTo(k - W * dir, W); ctx.stroke(); } ctx.restore(); };
+
+  // 2b. the soil map: each map unit tinted and outlined
+  if (ov === 'soil' && ref?.soils) {
+    ref.soils.forEach((u, i) => {
+      const col = soilColor(u.drainage, i);
+      for (const r of u.rings) { ring(r); ctx.globalAlpha = s.overlayOpacity * 0.6; ctx.fillStyle = col; ctx.fill(); ctx.globalAlpha = 1; ctx.lineWidth = 4; ctx.strokeStyle = col; ctx.stroke(); }
+    });
+  }
+
+  // 2c. hazards from the public maps: flood areas hatched blue, wetlands teal
+  if (s.layers.hazards !== false && ref) {
+    for (const z of ref.flood || []) {
+      ring(z.ring); ctx.fillStyle = z.sfha ? 'rgba(37,99,235,0.18)' : 'rgba(96,165,250,0.10)'; ctx.fill();
+      ring(z.ring); hatch(z.floodway ? 'rgba(37,99,235,0.55)' : 'rgba(59,130,246,0.38)', z.floodway ? 14 : 22);
+      ring(z.ring); ctx.setLineDash([16, 8]); ctx.lineWidth = 4; ctx.strokeStyle = '#3b82f6'; ctx.stroke(); ctx.setLineDash([]);
+    }
+    for (const w of ref.wetlands || []) {
+      ring(w.ring); ctx.fillStyle = 'rgba(20,184,166,0.16)'; ctx.fill();
+      ring(w.ring); hatch('rgba(20,184,166,0.35)', 26, -1);
+      ring(w.ring); ctx.lineWidth = 3; ctx.strokeStyle = '#14b8a6'; ctx.stroke();
+    }
+  }
+
   // 3. contours, thinned out automatically so a mountain does not turn solid white
   if (s.contours) {
     let hmin = Infinity, hmax = -Infinity;
@@ -119,6 +155,36 @@ export function composeMap(
   }
 
   const pxPerM = W / g.size;
+
+  // 3b. what is already there: roads, mapped buildings, streams and open water
+  const strokeLine = (pts: [number, number][]) => { ctx.beginPath(); pts.forEach(([x, y], i) => { const [px, py] = toPx(x, y); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); }); };
+  if (s.layers.existing !== false && ref) {
+    for (const r of ref.osm?.roads || []) {
+      const wide = ['primary', 'secondary', 'tertiary', 'residential', 'unclassified', 'trunk'].includes(r.kind);
+      strokeLine(r.line); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.lineWidth = Math.max(5, (wide ? 6 : 3.5) * pxPerM); ctx.strokeStyle = 'rgba(40,36,30,0.55)'; ctx.stroke();
+      ctx.lineWidth = Math.max(3, (wide ? 5 : 2.8) * pxPerM); ctx.strokeStyle = 'rgba(214,208,196,0.55)'; ctx.stroke();
+    }
+    for (const b of ref.osm?.buildings || []) { ring(b.ring); ctx.fillStyle = 'rgba(180,180,170,0.35)'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.setLineDash([8, 5]); ctx.stroke(); ctx.setLineDash([]); }
+    for (const w of ref.osm?.water || []) {
+      if (w.ring) { ring(w.ring); ctx.fillStyle = 'rgba(56,150,210,0.45)'; ctx.fill(); }
+      else if (w.line && !(ref.streams && ref.streams.length)) { strokeLine(w.line); ctx.lineCap = 'round'; ctx.lineWidth = 7; ctx.strokeStyle = 'rgba(56,150,210,0.9)'; ctx.stroke(); }
+    }
+    for (const st of ref.streams || []) { strokeLine(st.line); ctx.lineCap = 'round'; ctx.lineWidth = /intermittent|ephemeral/.test(st.kind) ? 5 : 8; ctx.setLineDash(/intermittent|ephemeral/.test(st.kind) ? [18, 10] : []); ctx.strokeStyle = 'rgba(30,120,200,0.95)'; ctx.stroke(); ctx.setLineDash([]); }
+  }
+
+  // 3c. the property line, with everything outside it dimmed
+  const boundary = features.find((f) => f.kind === 'boundary' && f.points.length >= 3);
+  if (boundary) {
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, W, W);
+    boundary.points.forEach(([x, y], i) => { const [px, py] = toPx(x, y); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(8,12,9,0.42)'; ctx.fill('evenodd');
+    ctx.restore();
+    ring(boundary.points);
+    ctx.lineWidth = boundary.id === selectedId ? 9 : 6; ctx.setLineDash([26, 10, 6, 10]); ctx.strokeStyle = boundary.id === selectedId ? '#fde68a' : '#f8fafc'; ctx.stroke(); ctx.setLineDash([]);
+  }
 
   // 4. zones
   if (s.layers.zones) for (const f of features) {
@@ -150,7 +216,7 @@ export function composeMap(
     f.points.forEach(([x, y], i) => { const [px, py] = toPx(x, y); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     ctx.lineWidth = Math.max(3, (f.width ?? 1.5) * pxPerM);
-    ctx.strokeStyle = f.id === selectedId ? '#fde68a' : (f.color || '#c8b08a');
+    ctx.strokeStyle = f.id === selectedId ? '#fde68a' : (f.color || (f.status === 'existing' ? '#9ca3af' : '#c8b08a'));
     ctx.stroke();
   }
 

@@ -1,11 +1,12 @@
 // Every outside data source the app uses, with a disk cache in front of each.
-// All are free and need no key: OpenStreetMap Nominatim, USGS 3DEP, AWS Terrain Tiles,
-// Esri World Imagery, Open-Meteo and USDA Soil Data Access.
+// All are free and need no key: OpenStreetMap Nominatim and Overpass, the US Census geocoder,
+// USGS 3DEP and National Hydrography, AWS Terrain Tiles, Esri World Imagery, Open-Meteo,
+// FEMA flood maps, the US Fish and Wildlife wetlands inventory and USDA Soil Data Access.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { PNG } from 'pngjs';
-import { siteGrid, lonLatToPixel, decodeTerrarium, readFloatTiff, bilinear, summariseClimateV2 } from './geo.mjs';
+import { siteGrid, lonLatToPixel, decodeTerrarium, readFloatTiff, bilinear, summariseClimateV2, parseFlood, parseWetlands, parseStreams, parseOsm, wktRings, toLocal, clipRing } from './geo.mjs';
 
 const UA = 'Permascape3D/1.0 (local permaculture design app)';
 
@@ -53,10 +54,20 @@ export function makeSources(cacheDir) {
     if (coords) {
       return [{ lat: coords[0], lon: coords[1], label: `${coords[0].toFixed(5)}, ${coords[1].toFixed(5)}`, kind: 'coordinates' }];
     }
-    return cachedJson('geocode', q.trim().toLowerCase(), async () => {
-      const rows = await nominatim(`https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=6&q=${encodeURIComponent(q)}`);
-      return rows.map((r) => ({ lat: Number(r.lat), lon: Number(r.lon), label: r.display_name, kind: r.type }));
+    return cachedJson('geocode2', q.trim().toLowerCase(), async () => {
+      // a street address with a house number: the Census geocoder knows US rural addresses
+      // that OpenStreetMap does not, so it goes first and OpenStreetMap fills in the rest
+      const census = /^\s*\d+\s+\S/.test(q) ? await censusGeocode(q).catch(() => []) : [];
+      const rows = await nominatim(`https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=6&q=${encodeURIComponent(q)}`).catch((e) => { if (census.length) return []; throw e; });
+      return [...census, ...rows.map((r) => ({ lat: Number(r.lat), lon: Number(r.lon), label: r.display_name, kind: r.type }))];
     });
+  }
+
+  async function censusGeocode(q) {
+    const r = await fetch('https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?benchmark=Public_AR_Current&format=json&address=' + encodeURIComponent(q), { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(15000) });
+    if (!r.ok) throw new Error(`census geocoder answered ${r.status}`);
+    const j = await r.json();
+    return (j.result?.addressMatches || []).slice(0, 3).map((m) => ({ lat: m.coordinates.y, lon: m.coordinates.x, label: titleCase(m.matchedAddress) + ', United States', kind: 'address' }));
   }
 
   async function reverse(lat, lon) {
@@ -280,8 +291,112 @@ export function makeSources(cacheDir) {
     });
   }
 
-  return { geocode, reverse, terrain, tile, climate, soil, wildPlants, wind };
+  async function getJson(url, init = {}, timeout = 45000) {
+    const r = await fetch(url, { ...init, headers: { 'user-agent': UA, ...(init.headers || {}) }, signal: AbortSignal.timeout(timeout) });
+    if (!r.ok) throw new Error(`answered ${r.status}`);
+    return r.json();
+  }
+  const envelope = (b) => `geometry=${b.west},${b.south},${b.east},${b.north}&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&returnGeometry=true&geometryPrecision=6&f=geojson`;
+
+  /**
+   * What is already on and around the land, from public maps: FEMA flood zones, wetlands,
+   * streams, soil map units across the whole site, and OpenStreetMap buildings, roads and water.
+   * Each source is fetched on its own, so one being down only leaves its layer empty.
+   */
+  async function surroundings(lat, lon, size) {
+    const key = `${lat.toFixed(5)},${lon.toFixed(5)},${size}`;
+    const b = siteGrid(lat, lon, size, 1);
+    const pad = 0.0002; // a little beyond the square, so features crossing the edge are kept
+    const bb = { west: b.west - pad, east: b.east + pad, south: b.south - pad, north: b.north + pad };
+    // the federal map servers drop connections and time out under load: try a few times
+    const patient = async (fn) => { let err; for (let k = 0; k < 4; k++) { try { return await fn(); } catch (e) { err = e; await new Promise((r) => setTimeout(r, 1500 * (k + 1))); } } throw err; };
+    const part = (name, fn) => cachedJson('surround-' + name, key, fn).then((v) => [name, v, null]).catch((e) => [name, null, e.message]);
+    const parts = await Promise.all([
+      part('flood', async () => parseFlood(await patient(() => getJson(`https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query?outFields=FLD_ZONE,ZONE_SUBTY,SFHA_TF&maxAllowableOffset=0.00002&${envelope(bb)}`, {}, 60000)), lat, lon, size)),
+      part('wetlands', async () => parseWetlands(await patient(() => getJson(`https://fwspublicservices.wim.usgs.gov/wetlandsmapservice/rest/services/Wetlands/MapServer/0/query?outFields=WETLAND_TYPE,ATTRIBUTE&maxAllowableOffset=0.00002&${envelope(bb)}`)), lat, lon, size)),
+      part('streams', async () => parseStreams(await patient(() => getJson(`https://hydro.nationalmap.gov/arcgis/rest/services/nhd/MapServer/6/query?outFields=gnis_name,ftype,fcode&${envelope(bb)}`)), lat, lon, size)),
+      part('soils', () => soilMap(lat, lon, size, bb)),
+      part('osm', async () => parseOsm(await retry(() => getJson('https://overpass-api.de/api/interpreter', {
+        method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'data=' + encodeURIComponent(`[out:json][timeout:25];(way["building"](${bb.south},${bb.west},${bb.north},${bb.east});way["highway"](${bb.south},${bb.west},${bb.north},${bb.east});way["waterway"](${bb.south},${bb.west},${bb.north},${bb.east});way["natural"="water"](${bb.south},${bb.west},${bb.north},${bb.east}););out geom;`),
+      }, 40000)), lat, lon, size)),
+    ]);
+    const out = { fetched: new Date().toISOString(), errors: {} };
+    for (const [name, v, err] of parts) { out[name] = v; if (err) out.errors[name] = err; }
+    out.sources = {
+      flood: 'FEMA National Flood Hazard Layer', wetlands: 'US Fish and Wildlife Service National Wetlands Inventory',
+      streams: 'USGS National Hydrography Dataset', soils: 'USDA NRCS SSURGO soil map units', osm: '© OpenStreetMap contributors',
+    };
+    return out;
+  }
+
+  /** Every soil map unit on the site with its share of the area and what matters for design. */
+  async function soilMap(lat, lon, size, bb) {
+    const poly = `polygon((${bb.west} ${bb.south}, ${bb.east} ${bb.south}, ${bb.east} ${bb.north}, ${bb.west} ${bb.north}, ${bb.west} ${bb.south}))`;
+    const rows = await retry(() => sdaQuery(
+      `SELECT mupolygonkey, mukey, mupolygongeo.STIntersection(geometry::STGeomFromText('${poly.toUpperCase()}', 4326)).STAsText() AS wkt FROM mupolygon ` +
+      `WHERE mupolygonkey IN (SELECT * FROM SDA_Get_Mupolygonkey_from_intersection_with_WktWgs84('${poly}'))`));
+    if (!rows.length) return [];
+    const keys = [...new Set(rows.map((r) => String(r.mukey).replace(/[^0-9]/g, '')))];
+    const attrs = await retry(() => sdaQuery(`SELECT mukey, muname, drclassdcd, hydgrpdcd, flodfreqdcd, pondfreqprs, slopegradwta, brockdepmin, wtdepannmin FROM muaggatt WHERE mukey IN (${keys.map((k) => `'${k}'`).join(',')})`));
+    const ph = await retry(() => sdaQuery(
+      'SELECT c.mukey, ch.ph1to1h2o_r, ch.om_r FROM component c INNER JOIN chorizon ch ON ch.cokey = c.cokey ' +
+      `WHERE c.mukey IN (${keys.map((k) => `'${k}'`).join(',')}) AND c.majcompflag = 'Yes' AND ch.hzdept_r = 0`)).catch(() => []);
+    const local = toLocal(lat, lon), h = size / 2;
+    const units = {};
+    for (const a of attrs) {
+      const p = ph.find((x) => String(x.mukey) === String(a.mukey));
+      units[a.mukey] = {
+        mukey: String(a.mukey), name: a.muname, drainage: a.drclassdcd || null, hydgrp: a.hydgrpdcd || null, flooding: a.flodfreqdcd || null,
+        ponding: a.pondfreqprs != null ? Number(a.pondfreqprs) : null, slope: a.slopegradwta != null ? Number(a.slopegradwta) : null,
+        bedrockCm: a.brockdepmin != null ? Number(a.brockdepmin) : null, waterTableCm: a.wtdepannmin != null ? Number(a.wtdepannmin) : null,
+        pH: p?.ph1to1h2o_r != null ? Number(p.ph1to1h2o_r) : null, organicPct: p?.om_r != null ? Number(p.om_r) : null, rings: [],
+      };
+    }
+    for (const r of rows) {
+      const u = units[String(r.mukey)];
+      if (!u) continue;
+      for (const ring of wktRings(r.wkt)) { const c = clipRing(ring.map(local), h); if (c.length) u.rings.push(c); }
+    }
+    const area = (ring) => Math.abs(ring.reduce((s, p, i) => { const q = ring[(i + 1) % ring.length]; return s + p[0] * q[1] - q[0] * p[1]; }, 0) / 2);
+    const list = Object.values(units).filter((u) => u.rings.length);
+    for (const u of list) u.share = +(u.rings.reduce((s, r) => s + area(r), 0) / (size * size)).toFixed(3);
+    return list.sort((a, b) => b.share - a.share);
+  }
+
+  async function sdaQuery(sql) {
+    const r = await fetch('https://SDMDataAccess.sc.egov.usda.gov/Tabular/post.rest', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'user-agent': UA },
+      body: JSON.stringify({ query: sql, format: 'JSON+COLUMNNAME' }), signal: AbortSignal.timeout(45000),
+    });
+    if (!r.ok) throw new Error(`soil service answered ${r.status}`);
+    const text = await r.text();
+    if (!text.trim()) return [];
+    const [cols, ...rows] = JSON.parse(text).Table || [];
+    return rows.map((row) => Object.fromEntries(cols.map((c, i) => [c, row[i]])));
+  }
+
+  /** The next ten days, for the season watch: frost, heavy rain, heat and wind. Kept three hours. */
+  const forecastMem = new Map();
+  async function forecast(lat, lon) {
+    const key = `${lat.toFixed(2)},${lon.toFixed(2)}`;
+    const hit = forecastMem.get(key);
+    if (hit && Date.now() - hit.at < 3 * 3600_000) return hit.v;
+    const j = await retry(() => getJson(`https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&daily=temperature_2m_min,temperature_2m_max,precipitation_sum,wind_gusts_10m_max&timezone=auto&forecast_days=10`, {}, 20000));
+    let alerts = [];
+    try {
+      const a = await getJson(`https://api.weather.gov/alerts/active?point=${lat.toFixed(4)},${lon.toFixed(4)}`, { headers: { accept: 'application/geo+json' } }, 15000);
+      alerts = (a.features || []).map((f) => ({ event: f.properties.event, headline: f.properties.headline, ends: f.properties.ends || f.properties.expires }));
+    } catch { /* outside the US, or the service is down: the forecast still stands */ }
+    const v = { days: j.daily.time.map((t, i) => ({ date: t, minC: j.daily.temperature_2m_min[i], maxC: j.daily.temperature_2m_max[i], rainMm: j.daily.precipitation_sum[i], gustKmh: j.daily.wind_gusts_10m_max[i] })), alerts, source: 'Open-Meteo forecast, National Weather Service alerts' };
+    forecastMem.set(key, { at: Date.now(), v });
+    return v;
+  }
+
+  return { geocode, reverse, terrain, tile, climate, soil, wildPlants, wind, surroundings, forecast };
 }
+
+const titleCase = (s) => String(s).toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase()).replace(/\b(Nc|Ny|Ca|Tx|Va|Sc|Ga|Fl|Or|Wa|Co|Nm|Az|Ut|Id|Mt|Wy|Nd|Sd|Ne|Ks|Ok|Mn|Ia|Mo|Ar|La|Wi|Il|Mi|In|Oh|Ky|Tn|Ms|Al|Pa|Nj|De|Md|Dc|Wv|Ct|Ri|Ma|Vt|Nh|Me|Ak|Hi|Nv)\b/g, (m) => m.toUpperCase());
 
 /** "40.1, -105.2", "40.1 -105.2" or a Google Maps link with @lat,lon. */
 /**

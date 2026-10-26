@@ -3,3 +3,4 @@ dist
 data/cache
 data/projects
 *.log
+data/profile.json

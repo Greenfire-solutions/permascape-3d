@@ -12,12 +12,12 @@ export type Tool =
   | 'select' | 'raise' | 'lower' | 'smooth' | 'flatten' | 'berm' | 'swale' | 'contour'
   | 'path' | 'zone' | 'measure' | 'water'
   | 'plant' | 'building' | 'greenhouse' | 'tank' | 'pond' | 'garden' | 'compost' | 'coop' | 'hive' | 'irrigation'
-  | 'guild' | 'hedge' | 'fence' | 'keyline' | 'sector' | 'paddock';
+  | 'guild' | 'hedge' | 'fence' | 'keyline' | 'sector' | 'paddock' | 'boundary';
 
 export const SCULPT_TOOLS: Tool[] = ['raise', 'lower', 'smooth', 'flatten'];
 export const STROKE_TOOLS: Tool[] = ['berm', 'swale', 'path', 'hedge', 'fence', 'sector'];
 export const PLACE_TOOLS: Tool[] = ['plant', 'building', 'greenhouse', 'tank', 'pond', 'garden', 'compost', 'coop', 'hive', 'irrigation'];
-const CLICK_TOOLS: Tool[] = ['contour', 'zone', 'measure', 'guild', 'keyline', 'paddock', ...PLACE_TOOLS];
+const CLICK_TOOLS: Tool[] = ['contour', 'zone', 'measure', 'guild', 'keyline', 'paddock', 'boundary', ...PLACE_TOOLS];
 
 export interface OverlayLine { points: [number, number][]; color: string; closed?: boolean; width?: number }
 

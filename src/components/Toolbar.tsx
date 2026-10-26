@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import {
+import { SquareDashed,
   MousePointer2, Ruler, ArrowUpFromLine, ArrowDownToLine, Wind, Minus, Waves, Spline, Mountain, Droplet, Hexagon, Route,
   TreePine, Home, Warehouse, Sprout, Cylinder, Recycle, Egg, Flower2, Pipette, Droplets, Shovel, TreeDeciduous, Fence,
   Compass, Grip, PawPrint, Trees, LayoutGrid, Building2, Rows3,
@@ -36,6 +36,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
     { id: 'path', name: 'Path', icon: Route, hint: 'Draw a path' },
     { id: 'fence', name: 'Fence', icon: Fence, key: 'f', hint: 'Posts and wire along a line' },
     { id: 'paddock', name: 'Paddock', icon: PawPrint, hint: 'Grazing area with stocking numbers' },
+    { id: 'boundary', name: 'Property line', icon: SquareDashed, hint: 'The legal boundary, traced or imported' },
   ] },
   { id: 'plants', name: 'Plants', icon: TreePine, tools: [
     { id: 'plant', name: 'Plant', icon: TreePine, key: 'p', hint: 'One plant from the library' },

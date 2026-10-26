@@ -21,7 +21,8 @@ export interface SiteClimate {
   lastSafe: number | null;
   firstMean: number | null;
   firstSafe: number | null;
-  frostFreeDays: number;
+  frostFreeDays: number; // the safe season, 9 years in 10
+  frostFreeAvgDays?: number; // the average season, last mean frost to first mean frost
   chill: number | null;
   gdd: number | null;
   hottestMaxC: number;
@@ -121,7 +122,7 @@ export function buildSiteClimate(c: Climate, lat: number, o: Overrides = {}): Si
 
   return {
     lat, zoneNum, zoneLabel, zoneSource, extremeMinC: zoneMinC(zoneNum),
-    frostFree, lastMean, lastSafe, firstMean, firstSafe, frostFreeDays,
+    frostFree, lastMean, lastSafe, firstMean, firstSafe, frostFreeDays, frostFreeAvgDays: frostFree ? 365 : ((firstMean! - lastMean! + 365) % 365),
     chill: c.chillHours ?? null, gdd: c.gdd10 ?? null,
     hottestMaxC: Math.max(...monthlyMax), coldestMeanC: Math.min(...meanM),
     humid, arid, annualPrecipMm: c.annualPrecipMm, wetSeason: c.wetSeason, koppen: c.koppen ?? null,

@@ -359,3 +359,177 @@ export function summariseClimateV2(daily, hourly, lat) {
 }
 
 export { MONTH_MID };
+
+// ---------------------------------------------------------------- existing conditions
+// Public map layers arrive as lon/lat; the app works in metres from the site centre (x east,
+// y north) inside a square. These turn them into local shapes clipped to the square.
+
+/** lon/lat to local metres from the site centre. */
+export function toLocal(lat0, lon0) {
+  const m = metresPerDegree(lat0);
+  return ([lon, lat]) => [+((lon - lon0) * m.lon).toFixed(2), +((lat - lat0) * m.lat).toFixed(2)];
+}
+
+/** Sutherland-Hodgman: a closed ring clipped to the square |x|,|y| <= h. */
+export function clipRing(ring, h) {
+  let out = ring.slice();
+  if (out.length > 1 && out[0][0] === out[out.length - 1][0] && out[0][1] === out[out.length - 1][1]) out.pop();
+  const edges = [[(p) => p[0] >= -h, (a, b) => cut(a, b, 0, -h)], [(p) => p[0] <= h, (a, b) => cut(a, b, 0, h)], [(p) => p[1] >= -h, (a, b) => cut(a, b, 1, -h)], [(p) => p[1] <= h, (a, b) => cut(a, b, 1, h)]];
+  for (const [inside, at] of edges) {
+    const src = out; out = [];
+    for (let i = 0; i < src.length; i++) {
+      const a = src[i], b = src[(i + 1) % src.length];
+      const ia = inside(a), ib = inside(b);
+      if (ia) out.push(a);
+      if (ia !== ib) out.push(at(a, b));
+    }
+    if (!out.length) return [];
+  }
+  return out.length >= 3 ? out : [];
+}
+function cut(a, b, axis, v) {
+  const t = (v - a[axis]) / (b[axis] - a[axis]);
+  return axis === 0 ? [v, +(a[1] + (b[1] - a[1]) * t).toFixed(2)] : [+(a[0] + (b[0] - a[0]) * t).toFixed(2), v];
+}
+
+/** A polyline clipped to the square: the runs that lie inside, each with at least two points. */
+export function clipLine(line, h) {
+  const runs = [];
+  let cur = [];
+  const inside = (p) => Math.abs(p[0]) <= h && Math.abs(p[1]) <= h;
+  for (let i = 0; i < line.length; i++) {
+    const p = line[i];
+    if (inside(p)) { if (!cur.length && i > 0) cur.push(edgePoint(line[i - 1], p, h)); cur.push(p); }
+    else if (cur.length) { cur.push(edgePoint(p, line[i - 1], h)); runs.push(cur); cur = []; }
+    else if (i > 0) {
+      // both ends outside but the segment may still cross the square
+      const seg = crossSquare(line[i - 1], p, h);
+      if (seg) runs.push(seg);
+    }
+  }
+  if (cur.length >= 2) runs.push(cur);
+  return runs.filter((r) => r.length >= 2);
+}
+/** Where the segment from outside point o to inside point i meets the square's edge. */
+function edgePoint(o, i, h) {
+  let t = 1;
+  for (let axis = 0; axis < 2; axis++) for (const v of [-h, h]) {
+    const d = o[axis] - i[axis];
+    if (d === 0) continue;
+    const tt = (v - i[axis]) / d;
+    if (tt > 0 && tt < t) { const q = [i[0] + (o[0] - i[0]) * tt, i[1] + (o[1] - i[1]) * tt]; if (Math.abs(q[0]) <= h + 1e-6 && Math.abs(q[1]) <= h + 1e-6) t = tt; }
+  }
+  return [+(i[0] + (o[0] - i[0]) * t).toFixed(2), +(i[1] + (o[1] - i[1]) * t).toFixed(2)];
+}
+function crossSquare(a, b, h) {
+  let t0 = 0, t1 = 1;
+  const d = [b[0] - a[0], b[1] - a[1]];
+  for (let axis = 0; axis < 2; axis++) {
+    for (const [p, q] of [[-d[axis], a[axis] + h], [d[axis], h - a[axis]]]) {
+      if (p === 0) { if (q < 0) return null; continue; }
+      const r = q / p;
+      if (p < 0) t0 = Math.max(t0, r); else t1 = Math.min(t1, r);
+      if (t0 > t1) return null;
+    }
+  }
+  const at = (t) => [+(a[0] + d[0] * t).toFixed(2), +(a[1] + d[1] * t).toFixed(2)];
+  return [at(t0), at(t1)];
+}
+
+/** Every outer ring of a GeoJSON Polygon or MultiPolygon. */
+export function outerRings(geom) {
+  if (!geom) return [];
+  if (geom.type === 'Polygon') return [geom.coordinates[0]];
+  if (geom.type === 'MultiPolygon') return geom.coordinates.map((p) => p[0]);
+  return [];
+}
+/** Every line of a GeoJSON LineString or MultiLineString. */
+export function lines(geom) {
+  if (!geom) return [];
+  if (geom.type === 'LineString') return [geom.coordinates];
+  if (geom.type === 'MultiLineString') return geom.coordinates;
+  return [];
+}
+
+/** "POLYGON ((x y, ...), (...))" or MULTIPOLYGON well-known text: outer rings as [lon, lat]. */
+export function wktRings(wkt) {
+  const s = String(wkt || '');
+  if (!/POLYGON/i.test(s)) return [];
+  const rings = [];
+  // a ring is a run of coordinates inside the innermost parentheses; holes are skipped by
+  // taking the first ring after each "((" opening
+  const re = /\(\(([^()]*)\)/g;
+  let m;
+  while ((m = re.exec(s))) rings.push(m[1].split(',').map((pt) => pt.trim().split(/\s+/).map(Number)).filter((p) => p.length >= 2 && p.every(Number.isFinite)));
+  return rings.filter((r) => r.length >= 3);
+}
+
+const FLOOD_TEXT = {
+  A: 'Flood zone A: 1% a year flood area, no detailed study', AE: 'Flood zone AE: 1% a year flood area', AH: 'Flood zone AH: shallow ponding', AO: 'Flood zone AO: sheet flow',
+  VE: 'Flood zone VE: coastal high hazard', X: 'Zone X: outside the 1% flood', D: 'Zone D: flood risk not studied',
+};
+export const floodLabel = (zone, subtype) => (subtype && /0\.2 PCT/i.test(subtype) ? 'Zone X (shaded): 0.2% a year flood area' : FLOOD_TEXT[zone] || `Flood zone ${zone}`);
+
+/** FEMA flood hazard polygons that matter (in a mapped flood area), in local metres. */
+export function parseFlood(fc, lat, lon, size) {
+  const local = toLocal(lat, lon), h = size / 2;
+  const out = [];
+  for (const f of fc?.features || []) {
+    const p = f.properties || {};
+    const sfha = p.SFHA_TF === 'T';
+    const shaded = /0\.2 PCT/i.test(p.ZONE_SUBTY || '');
+    if (!sfha && !shaded && p.FLD_ZONE !== 'D') continue;
+    for (const r of outerRings(f.geometry)) {
+      const ring = clipRing(r.map(local), h);
+      if (ring.length) out.push({ zone: p.FLD_ZONE, sfha, floodway: /FLOODWAY/i.test(p.ZONE_SUBTY || ''), label: floodLabel(p.FLD_ZONE, p.ZONE_SUBTY), ring });
+    }
+  }
+  return out;
+}
+
+/** National Wetlands Inventory polygons in local metres. */
+export function parseWetlands(fc, lat, lon, size) {
+  const local = toLocal(lat, lon), h = size / 2;
+  const out = [];
+  for (const f of fc?.features || []) {
+    const p = f.properties || {};
+    for (const r of outerRings(f.geometry)) {
+      const ring = clipRing(r.map(local), h);
+      if (ring.length) out.push({ type: p.WETLAND_TYPE || 'Wetland', code: p.ATTRIBUTE || '', ring });
+    }
+  }
+  return out;
+}
+
+const NHD_TYPES = { 460: 'Stream or river', 558: 'Artificial path', 336: 'Canal or ditch', 334: 'Connector', 420: 'Underground conduit', 428: 'Pipeline', 566: 'Coastline' };
+/** USGS National Hydrography flowlines in local metres. Intermittent and ephemeral streams are named as such. */
+export function parseStreams(fc, lat, lon, size) {
+  const local = toLocal(lat, lon), h = size / 2;
+  const out = [];
+  for (const f of fc?.features || []) {
+    const p = f.properties || {};
+    if ([420, 428, 566].includes(p.ftype)) continue;
+    const fcode = Number(p.fcode);
+    const flow = fcode === 46003 ? 'intermittent' : fcode === 46007 ? 'ephemeral' : fcode === 46006 ? 'perennial' : '';
+    const kind = [NHD_TYPES[p.ftype] || 'Stream', flow].filter(Boolean).join(', ');
+    for (const l of lines(f.geometry)) for (const run of clipLine(l.map((pt) => local(pt)), h)) out.push({ name: p.gnis_name || null, kind, line: run });
+  }
+  return out;
+}
+
+/** OpenStreetMap ways from Overpass ("out geom"): buildings, roads and water, in local metres. */
+export function parseOsm(j, lat, lon, size) {
+  const local = toLocal(lat, lon), h = size / 2;
+  const buildings = [], roads = [], water = [];
+  for (const el of j?.elements || []) {
+    if (el.type !== 'way' || !el.geometry) continue;
+    const pts = el.geometry.map((g) => local([g.lon, g.lat]));
+    const t = el.tags || {};
+    const closed = pts.length > 3 && el.nodes && el.nodes[0] === el.nodes[el.nodes.length - 1];
+    if (t.building) { const ring = clipRing(pts, h); if (ring.length) buildings.push({ name: t.name || null, kind: t.building === 'yes' ? 'building' : t.building, ring }); }
+    else if (t.highway) for (const run of clipLine(pts, h)) roads.push({ name: t.name || null, kind: t.highway, surface: t.surface || null, line: run });
+    else if (t.waterway) for (const run of clipLine(pts, h)) water.push({ name: t.name || null, kind: t.waterway, line: run });
+    else if (t.natural === 'water' && closed) { const ring = clipRing(pts, h); if (ring.length) water.push({ name: t.name || null, kind: t.water || 'water', ring }); }
+  }
+  return { buildings, roads, water };
+}

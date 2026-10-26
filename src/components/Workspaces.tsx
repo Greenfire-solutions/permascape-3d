@@ -5,9 +5,9 @@ import { SPECIES, LAYER_NAMES, zoneFit, seasonalMonth, Species, Layer } from '..
 import { CATEGORY_NAMES } from '../lib/library';
 import { advise, rangesText, SiteClimate, Advice } from '../lib/advisor';
 import { monthTasks } from '../lib/summary';
-import { waterBudget, reviewDesign, FixId, ReviewInput, effectiveZone } from '../lib/permaculture';
+import { waterBudget, reviewDesign, FixId, ReviewInput, effectiveZone, WaterUseIn } from '../lib/permaculture';
 import type { Feature, Site, SiteObject } from '../lib/types';
-import { fmtWater, fmtRain, Units, fmtArea } from '../lib/units';
+import { fmtWater, fmtRain, Units, fmtArea, localizeText } from '../lib/units';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const STATUS = { good: { label: 'Grows well here', cls: 'text-emerald-300 bg-emerald-400/10 border-emerald-400/30' }, possible: { label: 'Possible with care', cls: 'text-amber-200 bg-amber-400/10 border-amber-400/30' }, no: { label: 'Not suited', cls: 'text-red-300 bg-red-400/10 border-red-400/25' } };
@@ -118,9 +118,11 @@ export function PlantLibrary({ sc, site, onClose, onUse }: { sc: SiteClimate | n
 
 // ---------------------------------------------------------------- year calendar
 
-export function YearCalendar({ objects, sc, lat, year, onClose, onSelect }: { objects: SiteObject[]; sc: SiteClimate | null; lat: number | null; year: number; onClose: () => void; onSelect: (id: string) => void }) {
+export function YearCalendar({ objects, sc, lat, start, onClose, onSelect }: { objects: SiteObject[]; sc: SiteClimate | null; lat: number | null; start: Date; onClose: () => void; onSelect: (id: string) => void }) {
   const [view, setView] = useState<'jobs' | 'harvest'>('jobs');
-  const months = useMemo(() => MONTHS.map((_, m) => monthTasks(objects, { viewDate: new Date(year, m, 15), lat } as any, sc)), [objects, sc, lat, year]);
+  // the twelve months from the one on the timeline: a plan looks forward, not back to January
+  const dates = useMemo(() => MONTHS.map((_, k) => new Date(start.getFullYear(), start.getMonth() + k, 15)), [start.getFullYear(), start.getMonth()]);
+  const months = useMemo(() => dates.map((d) => monthTasks(objects, { viewDate: d, lat } as any, sc)), [objects, sc, lat, dates]);
   const harvest = useMemo(() => {
     const by: Record<string, { sp: Species; n: number; months: number[] }> = {};
     for (const o of objects) {
@@ -131,17 +133,17 @@ export function YearCalendar({ objects, sc, lat, year, onClose, onSelect }: { ob
     }
     return Object.values(by).sort((a, b) => (a.months[0] ?? 13) - (b.months[0] ?? 13));
   }, [objects, lat]);
-  const now = new Date().getMonth();
+  const now = start.getMonth();
   const kindColor: Record<string, string> = { pruned: '#c084fc', harvested: '#f5b94a', planted: '#8acf52', watered: '#5cc8f0', mulched: '#d4a95c', note: '#b4c2b7' };
   return (
-    <Sheet title={`The year on your land, ${year}`} subtitle="Every job and harvest from your plants' own calendars and your climate" icon={CalendarDays} onClose={onClose}
+    <Sheet title="The year ahead on your land" subtitle={`${dates[0].toLocaleDateString('en-US', { month: 'long', year: 'numeric' })} to ${dates[11].toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}: every job and harvest from your plants' own calendars and your climate`} icon={CalendarDays} onClose={onClose}
       actions={<div className="w-56"><Segmented size="md" value={view} onChange={setView} options={[{ id: 'jobs', label: 'Jobs' }, { id: 'harvest', label: 'Harvests' }]} /></div>}>
       {view === 'jobs' ? (
         <div className="p-6 grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-3">
           {months.map((tasks, m) => (
-            <div key={m} className={`rounded-2xl border p-4 ${m === now ? 'border-emerald-400/50 bg-emerald-400/[0.05]' : 'border-white/[0.07] bg-zinc-950/40'}`}>
+            <div key={m} className={`rounded-2xl border p-4 ${m === 0 ? 'border-emerald-400/50 bg-emerald-400/[0.05]' : 'border-white/[0.07] bg-zinc-950/40'}`}>
               <div className="flex items-baseline justify-between mb-2">
-                <div className="font-display text-lg text-zinc-50">{new Date(year, m, 1).toLocaleDateString('en-US', { month: 'long' })}</div>
+                <div className="font-display text-lg text-zinc-50">{dates[m].toLocaleDateString('en-US', { month: 'long' })}{dates[m].getMonth() === 0 || m === 0 ? <span className="text-xs text-zinc-500 font-sans ml-1.5">{dates[m].getFullYear()}</span> : null}</div>
                 <div className="text-[11px] text-zinc-400">{tasks.length ? `${tasks.filter((t) => t.done).length}/${tasks.length} done` : 'quiet'}</div>
               </div>
               <div className="space-y-1 max-h-56 overflow-y-auto scroll-thin pr-1">
@@ -149,7 +151,7 @@ export function YearCalendar({ objects, sc, lat, year, onClose, onSelect }: { ob
                 {tasks.map((t) => (
                   <button key={t.id} onClick={() => onSelect(t.objectId)} className="w-full text-left flex items-start gap-2 text-xs hover:bg-white/[0.04] rounded-lg px-1.5 py-1">
                     <span className="w-2 h-2 rounded-full mt-1 shrink-0" style={{ background: kindColor[t.type] || '#b4c2b7' }} />
-                    <span className={t.done ? 'text-zinc-500 line-through' : 'text-zinc-200'}>{t.label}</span>
+                    <span className={t.done ? 'text-zinc-500 line-through' : 'text-zinc-200'} data-cal-task>{t.label}</span>
                   </button>
                 ))}
               </div>
@@ -181,9 +183,11 @@ export function YearCalendar({ objects, sc, lat, year, onClose, onSelect }: { ob
 
 // ---------------------------------------------------------------- water budget
 
-export function WaterBudget({ site, objects, features, units, onClose, onAddTank }: { site: Site; objects: SiteObject[]; features: Feature[]; units: Units; onClose: () => void; onAddTank: (litres: number) => void }) {
+export function WaterBudget({ site, objects, features, units, onClose, onAddTank, use, onUse }: { site: Site; objects: SiteObject[]; features: Feature[]; units: Units; onClose: () => void; onAddTank: (litres: number) => void; use: WaterUseIn; onUse: (u: WaterUseIn) => void }) {
   const [mature, setMature] = useState(true);
-  const b = useMemo(() => waterBudget(site, objects, features, mature ? 1 : 0.35), [site, objects, features, mature]);
+  const b = useMemo(() => waterBudget(site, objects, features, mature ? 1 : 0.35, use), [site, objects, features, mature, use]);
+  const imperial = units === 'imperial';
+  const perPerson = use.litresPerPerson ?? 190;
   if (!b) return (
     <Sheet title="Water budget" icon={Droplets} onClose={onClose}><div className="p-8 text-sm text-zinc-400">The water budget needs a real address for rainfall and temperatures. Load your land from an address first.</div></Sheet>
   );
@@ -195,18 +199,29 @@ export function WaterBudget({ site, objects, features, units, onClose, onAddTank
     <Sheet title="Water budget" subtitle="Rain in, plants out, month by month. Evaporation by the FAO Hargreaves method from your temperatures." icon={Droplets} onClose={onClose}
       actions={<div className="w-64"><Segmented size="md" value={mature ? 'm' : 'y'} onChange={(v) => setMature(v === 'm')} options={[{ id: 'y', label: 'Young planting' }, { id: 'm', label: 'Fully grown' }]} /></div>}>
       <div className="p-6 space-y-5">
+        <div className="rounded-2xl border border-white/[0.07] bg-zinc-950/40 p-4 grid sm:grid-cols-3 gap-3 items-end" data-water-use>
+          <label className="block text-[13px]"><span className="block text-[11px] uppercase tracking-[0.08em] text-zinc-400 font-semibold mb-1">People drinking from it</span>
+            <input type="number" min={0} value={use.people ?? 0} onChange={(e) => onUse({ ...use, people: Math.max(0, Number(e.target.value)) })} className="w-full bg-zinc-950/70 border border-white/10 rounded-lg px-2.5 py-1.5 text-zinc-100" data-water-people /></label>
+          <label className="block text-[13px]"><span className="block text-[11px] uppercase tracking-[0.08em] text-zinc-400 font-semibold mb-1">{imperial ? 'Gallons' : 'Litres'} each a day indoors</span>
+            <input type="number" min={0} value={Math.round(imperial ? perPerson * 0.264172 : perPerson)} onChange={(e) => onUse({ ...use, litresPerPerson: Math.max(0, Number(e.target.value)) / (imperial ? 0.264172 : 1) })} className="w-full bg-zinc-950/70 border border-white/10 rounded-lg px-2.5 py-1.5 text-zinc-100" /></label>
+          <label className="block text-[13px]"><span className="block text-[11px] uppercase tracking-[0.08em] text-zinc-400 font-semibold mb-1">Water supply</span>
+            <select value={use.supply || 'rain'} onChange={(e) => onUse({ ...use, supply: e.target.value as WaterUseIn['supply'] })} className="w-full bg-zinc-950/70 border border-white/10 rounded-lg px-2.5 py-1.5 text-zinc-100" data-water-supply>
+              <option value="rain">Rain only, from the tanks</option><option value="well">A well tops up the tanks</option><option value="mains">Town mains tops up</option><option value="spring">A spring tops up</option><option value="creek">A creek tops up</option>
+            </select></label>
+          <p className="sm:col-span-3 text-[11px] text-zinc-500">Animals are counted from the paddocks and coops in the design. {use.people ? `${use.people} people at ${Math.round(imperial ? perPerson * 0.264172 : perPerson)} ${imperial ? 'gallons' : 'litres'} a day use ${W(b.yearHouseL)} a year.` : 'Add people to plan drinking, washing and cooking water.'}</p>
+        </div>
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
           <Stat label="Rain a year" value={fmtRain(b.yearRain, units)} sub={`evaporation demand ${fmtRain(b.yearEt0, units)}`} />
           <Stat label="Roof catchment" value={W(b.yearRoofL)} sub={`${fmtArea(b.roofM2, units)} of roof`} />
-          <Stat label="Irrigation need" value={W(b.yearNeedL)} sub={`${fmtArea(b.canopyM2, units)} planted`} />
-          <Stat label="Tanks" value={W(b.tankL)} sub={b.yearShortL > 1 ? `${W(b.yearShortL)} short a year` : 'covers the need'} />
+          <Stat label="Water needed" value={W(b.yearNeedL)} sub={`plants ${W(b.yearNeedL - b.yearHouseL - b.yearAnimalsL)}, house ${W(b.yearHouseL)}, animals ${W(b.yearAnimalsL)}`} />
+          <Stat label="Tanks" value={W(b.tankL)} sub={b.supply !== 'rain' ? (b.fromSupplyL > 1 ? `${W(b.fromSupplyL)} a year from the ${b.supply}` : 'covers the need') : b.yearShortL > 1 ? `${W(b.yearShortL)} short a year` : 'covers the need'} />
           <Stat label="Held in the land" value={W(b.pondL + b.swaleL)} sub="ponds and swales" />
         </div>
         <div className="rounded-2xl border border-white/[0.07] bg-zinc-950/40 p-5">
           <div className="flex gap-4 text-[11px] text-zinc-400 mb-3">
             <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-sky-400" />Roof water caught</span>
-            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-amber-400" />Plants need beyond rain</span>
-            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-red-400" />Short (tank empty)</span>
+            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-amber-400" />Needed beyond rain (plants, house, animals)</span>
+            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-red-400" />{b.supply === 'rain' ? 'Short (tank empty)' : `Drawn from the ${b.supply}`}</span>
           </div>
           <div className="flex items-end gap-2" style={{ height: H + 24 }}>
             {b.months.map((m) => (
@@ -225,8 +240,9 @@ export function WaterBudget({ site, objects, features, units, onClose, onAddTank
         <div className="grid lg:grid-cols-2 gap-3">
           <div className="rounded-2xl border border-white/[0.07] bg-zinc-950/40 p-5 space-y-2">
             <div className="font-display text-lg text-zinc-50">What this means</div>
-            {b.canopyM2 < 1 && <p className="text-sm text-zinc-300">Nothing planted yet, so nothing needs watering. Place plants and beds to see the budget.</p>}
-            {b.canopyM2 >= 1 && (b.yearShortL < 1 ? <p className="text-sm text-emerald-200">Your tanks carry the planting through the year. Rain and roof water cover it.</p>
+            {b.canopyM2 < 1 && b.yearNeedL < 1 && <p className="text-sm text-zinc-300">Nothing planted yet and nobody drinking from it, so nothing to supply. Place plants or add people above.</p>}
+            {b.supply !== 'rain' && b.yearNeedL >= 1 && <p className="text-sm text-zinc-300">{b.fromSupplyL > 1 ? `The tanks give what they can; about ${W(b.fromSupplyL)} a year comes from the ${b.supply}, most of it in the driest months. Bigger tanks cut that draw.` : `Roof water and the tanks cover everything; the ${b.supply} is the backup.`}</p>}
+            {b.supply === 'rain' && b.yearNeedL >= 1 && (b.yearShortL < 1 ? <p className="text-sm text-emerald-200">Your tanks carry the planting through the year. Rain and roof water cover it.</p>
               : <p className="text-sm text-zinc-300">In the dry months the plants want {W(b.yearShortL)} more than the tanks can give. {b.roofCanCover ? `The roof does catch enough over the year; it is storage that runs out. A total of about ${W(b.tankForDriestRunL)} of tanks would carry the driest run.` : 'The roof alone cannot catch enough: add roof area (a shed or barn), swales to store water in the soil, mulch, and drought-tolerant plants.'}</p>)}
             <p className="text-xs text-zinc-500">Estimates: canopy at {mature ? 'full size' : 'about a third of full size'}, a crop factor for each plant's water need, 70% of rain on the planting counted as useful, 80% of roof rain caught, dormant plants drinking a quarter as much.</p>
           </div>
@@ -249,7 +265,7 @@ export function WaterBudget({ site, objects, features, units, onClose, onAddTank
 
 // ---------------------------------------------------------------- design review
 
-export function DesignReview({ input, onClose, onFix }: { input: ReviewInput; onClose: () => void; onFix: (f: FixId) => void }) {
+export function DesignReview({ input, onClose, onFix }: { input: ReviewInput; onClose: () => void; onFix: (f: FixId, ids?: string[]) => void }) {
   const r = useMemo(() => reviewDesign(input), [input]);
   const color = (v: number) => (v >= 75 ? '#8acf52' : v >= 45 ? '#f5b94a' : '#f87171');
   const verdict = r.overall >= 80 ? 'A strong, working design.' : r.overall >= 55 ? 'Good bones. A few moves will make it sing.' : r.overall >= 30 ? 'A start. Work through the suggestions in order.' : 'Just beginning. Start with water and zones.';
@@ -278,8 +294,8 @@ export function DesignReview({ input, onClose, onFix }: { input: ReviewInput; on
                   <div key={i} className="flex items-start gap-2.5 text-[13px]">
                     {f.level === 'good' ? <CheckCircle2 size={15} className="text-emerald-400 mt-0.5 shrink-0" /> : f.level === 'warn' ? <AlertTriangle size={15} className="text-amber-400 mt-0.5 shrink-0" /> : <Lightbulb size={15} className="text-sky-300 mt-0.5 shrink-0" />}
                     <div className="flex-1">
-                      <div className={f.level === 'good' ? 'text-zinc-400' : 'text-zinc-100'}>{f.text}</div>
-                      {f.fix && <button data-fix={f.fix} onClick={() => onFix(f.fix!)} className="mt-1 text-xs font-semibold text-emerald-300 hover:text-emerald-200 inline-flex items-center gap-1">{f.fixLabel || 'Fix it'} <ArrowRight size={12} /></button>}
+                      <div className={f.level === 'good' ? 'text-zinc-400' : 'text-zinc-100'}>{localizeText(f.text, input.units || 'imperial')}</div>
+                      {f.fix && <button data-fix={f.fix} onClick={() => onFix(f.fix!, f.ids)} className="mt-1 text-xs font-semibold text-emerald-300 hover:text-emerald-200 inline-flex items-center gap-1">{f.fixLabel || 'Fix it'} <ArrowRight size={12} /></button>}
                     </div>
                   </div>
                 ))}

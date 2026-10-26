@@ -237,8 +237,12 @@ export function terrainStats(g: Grid, original?: Float32Array | null) {
       if (d > 0.005) fill += d * cellA; else if (d < -0.005) cut -= d * cellA;
     }
   }
+  // a single lidar cell on a road cut or a wall can read 300%: the steepest 1% of the ground is
+  // what a designer means by "the steepest part"
+  const sorted = Float32Array.from(slope).sort();
+  const steep99 = sorted[Math.min(N - 1, Math.floor(N * 0.99))];
   return {
-    min, max, relief: max - min, meanSlope: sum / N, steepest,
+    min, max, relief: max - min, meanSlope: sum / N, steepest: steep99, steepestCell: steepest,
     classes: classes.map((k) => k / N), aspects: aspects.map((k) => k / N), flat: flat / N,
     cutM3: cut, fillM3: fill,
   };

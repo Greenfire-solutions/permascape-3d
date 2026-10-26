@@ -45,8 +45,8 @@ export const Toggle = ({ label, checked, onChange, id }: { label: string; checke
   </label>
 );
 
-export const Btn = ({ children, onClick, kind = 'plain', className = '', title, disabled }: {
-  children: React.ReactNode; onClick?: () => void; kind?: 'plain' | 'primary' | 'danger' | 'blue' | 'ghost'; className?: string; title?: string; disabled?: boolean;
+export const Btn = ({ children, onClick, kind = 'plain', className = '', title, disabled, ...rest }: {
+  children: React.ReactNode; onClick?: () => void; kind?: 'plain' | 'primary' | 'danger' | 'blue' | 'ghost'; className?: string; title?: string; disabled?: boolean; [data: `data-${string}`]: any;
 }) => {
   const k = {
     plain: 'bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-100 border border-zinc-700/60',
@@ -56,7 +56,7 @@ export const Btn = ({ children, onClick, kind = 'plain', className = '', title, 
     ghost: 'hover:bg-white/5 text-zinc-300',
   }[kind];
   return (
-    <button title={title} disabled={disabled} onClick={onClick} className={`flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none ${k} ${className}`}>
+    <button {...rest} title={title} disabled={disabled} onClick={onClick} className={`flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none ${k} ${className}`}>
       {children}
     </button>
   );

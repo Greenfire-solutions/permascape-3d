@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Sparkles, Send, X, Wand2, Check, Eye, EyeOff, Loader2, MessageCircle, TreeDeciduous, Droplet, Hexagon, Home, Route, Trees, PawPrint, Fence, Waves, Sprout, TreePine } from 'lucide-react';
+import { Sparkles, Send, X, Wand2, Check, Eye, EyeOff, Loader2, MessageCircle, TreeDeciduous, Droplet, Hexagon, Home, Route, Trees, PawPrint, Fence, Waves, Sprout, TreePine, ShieldCheck, AlertTriangle, ListChecks } from 'lucide-react';
 import type { AiAction, AiTurn } from '../lib/types';
 import { Btn, Chip, Segmented } from './ui';
-import { uid } from '../lib/api';
+import { uid, askPermie } from '../lib/api';
+import { GOALS } from './Business';
 
-const GOALS = ['Food forest', 'Market garden', 'Self-reliant homestead', 'Water first', 'Wildlife and pollinators', 'Small backyard', 'Animals and pasture', 'Low maintenance', 'Fire-wise'];
 const STARTERS = ['What should I plant first this season?', 'Where is the best spot for a pond?', 'How do I stop the runoff on my slope?', 'Which fruit trees suit my chill hours?', 'What can I grow in the shade by the house?'];
 
 const ICONS: Record<AiAction['kind'], any> = { plant: TreePine, guild: TreeDeciduous, hedge: Trees, zone: Hexagon, swale: Waves, pond: Droplet, structure: Home, garden: Sprout, path: Route, paddock: PawPrint, fence: Fence };
@@ -19,11 +19,17 @@ interface Props {
   onApply: (turnId: string, indices: number[]) => void;
   onPreview: (actions: AiAction[] | null) => void;
   onClose: () => void;
+  onUpdateTurn: (id: string, patch: Partial<AiTurn>) => void;
+  /** the rule checks run on a proposal as if it were added: plant conflicts, flood, streams, slope */
+  checkActions: (actions: AiAction[]) => string[];
+  start?: { mode: 'design' | 'ask'; question?: string; auto?: boolean } | null;
 }
 
-export default function Permie({ available, turns, goals, onGoals, buildContext, onTurn, onApply, onPreview, onClose }: Props) {
-  const [mode, setMode] = useState<'design' | 'ask'>(turns.length ? 'ask' : 'design');
-  const [text, setText] = useState('');
+export default function Permie({ available, turns, goals, onGoals, buildContext, onTurn, onApply, onPreview, onClose, onUpdateTurn, checkActions, start }: Props) {
+  const [mode, setMode] = useState<'design' | 'ask'>(start?.mode ?? (turns.length ? 'ask' : 'design'));
+  const [text, setText] = useState(start?.question ?? '');
+  const [compact, setCompact] = useState(false);
+  const [checking, setChecking] = useState<string | null>(null);
   const [deep, setDeep] = useState(false);
   const [busy, setBusy] = useState<{ since: number; mode: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -35,6 +41,28 @@ export default function Permie({ available, turns, goals, onGoals, buildContext,
   useEffect(() => { if (!busy) return; const t = setInterval(() => setTick((x) => x + 1), 1000); return () => clearInterval(t); }, [busy]);
   useEffect(() => { scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' }); }, [turns.length, busy]);
   useEffect(() => () => onPreview(null), []);
+  useEffect(() => { if (start?.auto && start.question) run(start.mode, start.question); }, []);
+
+  /** The senior designer's pass: Permie re-reads its own proposal against the land and the brief. */
+  const critique = async (turn: AiTurn, q: string) => {
+    setChecking(turn.id);
+    try {
+      // the app's own measurements go in too: the critic sees a coarse terrain grid, the checks see every metre
+      const found = turn.checks?.length ? `\n\nThe app measured this proposal on the real terrain and found these problems; fix each one (move it to gentler or safer ground, or drop it):\n- ${turn.checks.join('\n- ')}` : '';
+      const r = await askPermie({ mode: 'critic', question: q + found, context: buildContext(), proposal: turn.actions, model: deep ? 'opus' : 'sonnet' });
+      const drop = new Set(r.drop || []);
+      const added = (r.actions || []) as AiAction[];
+      const actions = [...turn.actions.filter((_, i) => !drop.has(i)), ...added];
+      onUpdateTurn(turn.id, { actions, critique: { answer: r.answer, dropped: [...drop], added: added.length, seconds: r.seconds }, checks: checkActions(actions) });
+      setPicked((p) => ({ ...p, [turn.id]: new Set(actions.map((_, i) => i)) }));
+      if (previewRef.current === turn.id) onPreview(actions);
+    } catch (e: any) {
+      onUpdateTurn(turn.id, { critique: { answer: `The self-check did not run: ${e.message}`, dropped: [], added: 0 } });
+    }
+    setChecking(null);
+  };
+  const previewRef = useRef<string | null>(null);
+  useEffect(() => { previewRef.current = previewing; }, [previewing]);
 
   const run = async (m: 'design' | 'ask', question: string) => {
     if (busy) return;
@@ -42,14 +70,15 @@ export default function Permie({ available, turns, goals, onGoals, buildContext,
     setBusy({ since: Date.now(), mode: m });
     try {
       const q = m === 'design' ? [goals.join(', '), question].filter(Boolean).join('. ') : question;
-      const r = await fetch('/api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: m, question: q, context: buildContext(), model: deep ? 'opus' : 'sonnet' }) });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || `Permie answered ${r.status}`);
-      const turn: AiTurn = { id: uid(), at: new Date().toISOString(), mode: m, question: m === 'design' ? (q || 'Design my land') : question, answer: j.answer, actions: j.actions || [], applied: [], seconds: j.seconds };
+      const j = await askPermie({ mode: m, question: q, context: buildContext(), model: deep ? 'opus' : 'sonnet' });
+      const actions = (j.actions || []) as AiAction[];
+      const turn: AiTurn = { id: uid(), at: new Date().toISOString(), mode: m, question: m === 'design' ? (q || 'Design my land') : question, answer: j.answer, actions, applied: [], seconds: j.seconds, checks: actions.length ? checkActions(actions) : [] };
       onTurn(turn);
       setPicked((p) => ({ ...p, [turn.id]: new Set(turn.actions.map((_, i) => i)) }));
-      if (turn.actions.length) { setPreviewing(turn.id); onPreview(turn.actions); }
+      if (turn.actions.length) { setPreviewing(turn.id); onPreview(turn.actions); setCompact(true); }
       setText('');
+      // every full design gets a second look before the person adds it
+      if (m === 'design' && actions.length) critique(turn, q);
     } catch (e: any) { setErr(e.message); }
     setBusy(null);
   };
@@ -62,6 +91,30 @@ export default function Permie({ available, turns, goals, onGoals, buildContext,
 
   const elapsed = busy ? Math.round((Date.now() - busy.since) / 1000) : 0;
   void tick;
+
+  // while a proposal is on the land, Permie steps aside to a small card so the land can be seen
+  const shown = previewing ? turns.find((t) => t.id === previewing) : null;
+  if (compact && shown) {
+    const sel = picked[shown.id] ?? new Set(shown.actions.map((_, i) => i));
+    const remaining = shown.actions.map((_, i) => i).filter((i) => !(shown.applied || []).includes(i));
+    const n = [...sel].filter((i) => remaining.includes(i)).length;
+    return (
+      <div className="absolute right-3 bottom-24 w-[340px] z-30 glass rounded-2xl shadow-glass p-4 space-y-3 animate-rise no-print" data-permie data-permie-compact>
+        <div className="flex items-start gap-2.5">
+          <span className="w-8 h-8 rounded-xl bg-gradient-to-br from-emerald-300 to-emerald-600 text-emerald-950 flex items-center justify-center shrink-0"><Sparkles size={15} /></span>
+          <div className="flex-1 min-w-0">
+            <div className="text-[13px] text-zinc-50 font-semibold">{shown.actions.length} changes shown on the land</div>
+            <div className="text-[11px] text-zinc-400">{checking === shown.id ? 'Permie is checking its own design...' : shown.critique ? `Checked: ${shown.critique.dropped.length} removed, ${shown.critique.added} added.` : 'Look around, then add the ones you want.'}{shown.checks?.length ? ` ${shown.checks.length} thing${shown.checks.length > 1 ? 's' : ''} to check.` : ''}</div>
+          </div>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white" title="Close"><X size={16} /></button>
+        </div>
+        <div className="flex gap-2">
+          <Btn className="flex-1" onClick={() => setCompact(false)} data-permie-expand><ListChecks size={13} /> See the list</Btn>
+          {remaining.length > 0 && <Btn kind="primary" className="flex-1" disabled={!n} onClick={() => { onApply(shown.id, [...sel].filter((i) => remaining.includes(i))); setPreviewing(null); onPreview(null); setCompact(false); }} data-permie-add><Check size={13} /> Add {n}</Btn>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="absolute right-3 top-3 bottom-3 w-[420px] z-30 glass rounded-3xl shadow-glass flex flex-col overflow-hidden animate-sheet no-print" data-permie>
@@ -96,10 +149,24 @@ export default function Permie({ available, turns, goals, onGoals, buildContext,
                 <div className="rounded-2xl border hairline bg-zinc-950/40 p-2">
                   <div className="flex items-center justify-between px-1.5 py-1">
                     <div className="text-[11px] uppercase tracking-[0.1em] text-zinc-400 font-semibold">{t.actions.length} proposed changes</div>
-                    <button onClick={() => { if (previewing === t.id) { setPreviewing(null); onPreview(null); } else { setPreviewing(t.id); onPreview(t.actions.filter((_, i) => sel.has(i))); } }} className="text-[11px] text-zinc-300 hover:text-white inline-flex items-center gap-1">
-                      {previewing === t.id ? <><EyeOff size={12} /> Hide preview</> : <><Eye size={12} /> Preview on land</>}
-                    </button>
+                    <div className="flex items-center gap-3">
+                      {previewing === t.id && <button onClick={() => setCompact(true)} className="text-[11px] text-emerald-200 hover:text-white" data-permie-look>Look at the land</button>}
+                      <button onClick={() => { if (previewing === t.id) { setPreviewing(null); onPreview(null); } else { setPreviewing(t.id); onPreview(t.actions.filter((_, i) => sel.has(i))); } }} className="text-[11px] text-zinc-300 hover:text-white inline-flex items-center gap-1">
+                        {previewing === t.id ? <><EyeOff size={12} /> Hide preview</> : <><Eye size={12} /> Preview on land</>}
+                      </button>
+                    </div>
                   </div>
+                  {(checking === t.id || t.critique) && (
+                    <div className="mx-1 mb-1.5 rounded-xl bg-emerald-400/[0.07] border border-emerald-400/20 p-2.5 text-[11.5px] text-emerald-50 whitespace-pre-wrap" data-critique>
+                      <div className="flex items-center gap-1.5 font-semibold mb-0.5"><ShieldCheck size={13} className="text-emerald-300" />{checking === t.id ? <>Checking its own design<span className="animate-breathe">...</span></> : 'Permie checked its own design'}</div>
+                      {t.critique?.answer}
+                    </div>
+                  )}
+                  {t.checks && t.checks.length > 0 && (
+                    <div className="mx-1 mb-1.5 space-y-1" data-proposal-checks>
+                      {t.checks.slice(0, 5).map((c, k) => <div key={k} className="flex gap-1.5 text-[11px] text-amber-100 bg-amber-400/[0.08] border border-amber-400/20 rounded-lg p-2"><AlertTriangle size={12} className="mt-0.5 shrink-0 text-amber-300" />{c}</div>)}
+                    </div>
+                  )}
                   <div className="max-h-64 overflow-y-auto scroll-thin space-y-0.5">
                     {t.actions.map((a, i) => {
                       const done = (t.applied || []).includes(i);

@@ -8,20 +8,35 @@ the built-in AI designer, can draw a whole first design or answer questions abou
 
 ## The app at a glance
 
+- **Brief**: the client intake (who, budget, years, water, animals, what to keep, access needs,
+  goals in their words). Paste an email, call transcript or visit notes and Permie fills it in,
+  never overwriting what you typed, and lists what is still worth asking. Your own designer
+  details (name, business, contact) are kept once and printed on every plan and report.
 - **Design** (the 3D land). Tool rail on the left, grouped the way a designer works:
   Select, Water, Shape, Plan, Plants, Build. Each group opens a labelled flyout with a
   keyboard key for the common tools (V, M, C, K, W, Z, S, F, P, G, H, B).
-- **Inspector** on the right with tabs: Inspect (the selection, tool options, a six-step
-  getting-started checklist and the design summary), Analyze (overlays, sectors, wind rose),
-  Site (land, climate, soil), Tasks (this month's jobs and the journal), Layers.
+- **Inspector** on the right with tabs: Inspect (the selection, tool options, a step-by-step
+  card that carries the live review score and its top warnings, and the design summary),
+  Analyze (overlays including the soil map, sectors, wind rose), Site (land, climate, soil,
+  existing conditions), Tasks (the season watch, this month's jobs grouped by plant kind, the
+  journal), Layers (including "show the design as built by year 1, 2 or 3").
 - **Plants**: the 206-plant library, each judged against your climate, with search, layer and
   function filters, the planting calendar for your land, and one-press Plant, Guild or Hedgerow.
-- **Calendar**: twelve months of jobs from every plant and bed, and a harvest calendar.
+- **Calendar**: the next twelve months of jobs from every plant and bed (formative pruning,
+  tree guards, spillway walks), and a harvest calendar.
 - **Water**: month-by-month water budget. Reference evaporation by the FAO-56 Hargreaves method
   from your temperatures, plant demand from canopy and water need, roof catchment into tanks,
-  tank shortfall and the tank size that carries the driest run.
-- **Review**: a live score (0 to 100) over five areas (water, plants and diversity, zones and
-  flow, climate and sectors, soil and earthworks). Every weak spot has a one-press next step.
+  tank shortfall and the tank size that carries the driest run. Household water (people times
+  gallons a day) and animal water (from the paddocks and coops) count too, and with a well,
+  mains or spring the shortfall is shown as drawn from that supply.
+- **Budget**: what the design costs to install, line by line and by build year, from 17
+  editable unit prices (ballpark US to start), with labour and contingency, against the client's
+  budget. Move any line to another year. Spreadsheet export. **Find nurseries** asks Permie to
+  search for local suppliers of the plant list.
+- **Review**: a live score (0 to 100) over six areas (water, plants and diversity, zones and
+  flow, climate and sectors, soil and earthworks, siting and safety). Every weak spot has a
+  one-press next step, and problems point at the exact elements ("Show me"). Nothing gets
+  credit for being absent.
 - **Ask Permie**: the AI designer (below).
 - Timeline dock: any date and hour (real sun and shadows) and a growth slider to 30 years.
 
@@ -41,7 +56,7 @@ terminal and `npm run dev` (Vite on 8141, proxies `/api` to 8140) in another.
 
 | what | source | notes |
 |---|---|---|
-| address to place | OpenStreetMap Nominatim | one request a second, cached; coordinates and Google Maps links also work |
+| address to place | US Census geocoder for street addresses, then OpenStreetMap Nominatim | coordinates and Google Maps links also work; a satellite preview lets you click the site square onto the property |
 | elevation | USGS 3DEP lidar (1 m), else AWS Terrain Tiles | US gets lidar; everywhere else 3 to 30 m |
 | satellite photo | Esri World Imagery | tiles cached in `data/cache` |
 | climate | Open-Meteo ERA5, 2015 to 2024 | rainfall, frost dates, USDA zone (an estimate: 10 km cells) |
@@ -49,6 +64,12 @@ terminal and `npm run dev` (Vite on 8141, proxies `/api` to 8140) in another.
 | hardiness zone | USDA 2023 map by ZIP (phzmapi.org) | US; estimated from climate elsewhere |
 | wild plants nearby | GBIF occurrence records | worldwide |
 | wind | Open-Meteo ERA5, daily dominant direction 2020 to 2024 | wind rose and sectors |
+| flood zones | FEMA National Flood Hazard Layer | US; mapped 1% a year flood areas and floodways |
+| wetlands | US Fish and Wildlife Service National Wetlands Inventory | US |
+| streams | USGS National Hydrography Dataset (OpenStreetMap waterways when it is down) | US |
+| soil across the site | USDA SSURGO map unit polygons, clipped to the site | drainage, flooding, runoff group, pH for each unit |
+| roads, buildings, water | OpenStreetMap via Overpass | mapped buildings can be added as existing |
+| 10-day forecast and alerts | Open-Meteo forecast, National Weather Service alerts | the season watch; kept three hours |
 
 Everything fetched is cached under `data/cache`, so a site opens offline the second time.
 Projects are JSON files in `data/projects`.
@@ -66,10 +87,19 @@ Projects are JSON files in `data/projects`.
   up to 30 years ahead. Deciduous trees go bare in winter, colour in fall, blossom and fruit.
 - **Plant record:** species, zone fit, planted date, source, cost, notes, and a journal.
   **Tasks** for the month come from each plant's prune and harvest months; ticking one logs it.
-- **Report:** land, climate, soil, water budget (roof catchment, tanks, ponds, swales),
-  earth moved, planting schedule. Prints or saves as PDF.
-- **Files:** autosave, undo and redo, save as copy, export PNG, GLB 3D model, CSV element
-  list, JSON project file, and import.
+- **Existing or proposed, and build years:** every element is existing (kept, not priced) or
+  proposed in year 1, 2 or 3. Permie gives each change a year; the Budget, the report and the
+  "show by year" filter use them.
+- **Report and proposal:** a branded client document: a cover letter (write it, or Permie drafts
+  it from the brief and the design), a scaled plan drawing (north arrow, scale bar, legend,
+  title block), the 3D view, the brief, the land, what the public maps show (flood, wetlands,
+  streams, soil units), climate with both frost seasons, water, the budget by year, the review,
+  the planting plan grouped by kind and year, the planting calendar, structures and features.
+  Prints, saves as PDF, or saves as one self-contained web page to email the client.
+- **Files:** autosave, undo and redo, save as copy, export PNG, the plan drawing (11 x 8.5 in at
+  300 dpi), GLB 3D model, CSV, GeoJSON (QGIS, ArcGIS), KML (Google Earth) and DXF (AutoCAD,
+  Vectorworks, SketchUp) in real coordinates, JSON project file, and import. Import a property
+  line from a county KML or GeoJSON.
 
 ## Permaculture tools added in the second build
 
@@ -87,6 +117,29 @@ Projects are JSON files in `data/projects`.
 - **Fence** (F) with post count, **Paddock** with animals, head count, the area they need and
   rest days for rotation.
 
+## The professional layer (third build)
+
+- **Property line** tool (Plan group): trace it or import it; outside is dimmed, the area is
+  measured, and anything outside it is flagged.
+- **Siting checks** a senior designer runs: swales on slopes over 15 to 20%, earthworks across a
+  road or drive, buildings, tanks, ponds and hives within 50 ft of a stream, compost, coops and
+  paddocks within 100 ft, livestock in the stream, anything in a FEMA flood area or a mapped
+  wetland (with the permit it would need), buildings on drainage lines or poorly drained soil,
+  willow and poplar near buildings.
+- **Plant checks**: disease hosts (red cedar beside apples, pears, quince or serviceberry for
+  cedar-apple rust; white pine with currants and gooseberries), black walnut's juglone, and
+  plants that spread or are listed invasive in parts of the US. Hedgerows and guilds never pick
+  them automatically, and pick plants that suit the climate, humidity and soil, not only the zone.
+- **Pond catchment**: select a pond to see how much land drains to it, the runoff a year, how
+  many times that fills it, and a spillway width rule of thumb.
+- **Season watch** in Tasks: the 10-day forecast as jobs, naming the tender plants before a
+  frost, the swales and spillways before heavy rain, the young trees before a dry hot week.
+- The sun and wind sectors radiate from the house and move with it.
+- Imperial mode is imperial everywhere: plant spacing in inches, beds in feet, heat in °F,
+  contours at 1, 2, 5 and 10 ft. The steepest slope reported is the steepest 1% of the land,
+  not one spike cell on a road cut.
+- Works on a tablet; on a phone the panel opens over the map from the header button.
+
 ## Permie, the AI designer
 
 Runs on Claude Code on this Mac (`claude -p`, your own Claude sign-in; no API key is read and
@@ -103,7 +156,17 @@ measured wind, everything already placed, and the plant ids that grow here.
 - Agents propose, you decide: nothing is added until you press Add. Answers are scrubbed of em
   dashes. Each call runs in an empty temp folder with no MCP servers, skills or settings, and
   its transcript folder is deleted afterwards. The conversation is saved with the project.
-- "Deeper design" uses Opus instead of Sonnet (slower). A design takes 30 to 90 seconds.
+- "Deeper design" uses Opus instead of Sonnet (slower). A design takes 30 to 120 seconds.
+- **It checks its own work.** After every design a second pass, the critic, re-reads the
+  proposal against the land, the brief and the hard rules (disease hosts, invasive plants,
+  windbreak side, swale slope, flood, wetlands, stream buffers, the client's numbers, the
+  budget), drops the mistakes and adds corrections, and says what it changed. The instant rule
+  checks also run on every proposal before it is added.
+- While a proposal previews, Permie shrinks to a small card so the land can be seen.
+- It knows the brief, the public map layers, the cost estimate and price list, and what is
+  existing, and gives every change a build year. Head counts and shed sizes follow the brief.
+- Three more jobs: **Brief** (reads client notes into the intake form), **Proposal** (drafts
+  the cover letter), **Find nurseries** (searches the web for suppliers of the plant list).
 
 ## Zone plant guide
 
@@ -134,9 +197,13 @@ snapshots in `test/fixtures`, so it runs offline).
 
 ## Tests
 
-- `npm test` (44 checks): guilds, hedgerows, keyline, sun sectors against published solstice
-  bearings, the water budget, the design review, applying an AI proposal, the wind rose; terrain maths, earthworks, flow, sun, sun hours, plants, TIFF and climate
-  parsing, the plant advisor in nine real places, and the server (its own instance on 8142 with throwaway data).
+- `npm test` (56 checks): guilds, hedgerows, keyline, sun sectors against published solstice
+  bearings, the water budget with household, animals and a well, the design review (no credit
+  for empty things), applying an AI proposal with the client's numbers, the wind rose, plant
+  conflicts and invasives, siting rules, the cost estimate, clipping the public map layers,
+  GeoJSON, KML and DXF exports and property line import, units in US terms, the season watch;
+  terrain maths, earthworks, flow, sun, sun hours, plants, TIFF and climate parsing, the plant
+  advisor in nine real places, and the server (its own instance on 8142 with throwaway data).
 - `npm run build && node test/e2e.mjs [--shots dir]`: real headless Chrome drives the whole
   thing on a real address (needs internet): every tool, every workspace, review fixes, and
   Permie's propose, preview, apply and undo path (with a canned AI answer, `PERMASCAPE_FAKE_AI=1`,

@@ -136,13 +136,14 @@ export default function StartDialog({ canClose, onClose, onOpenProject, onCreate
           {pick && !steps && (
             <div className="border border-emerald-400/25 bg-emerald-400/[0.05] rounded-2xl p-5 space-y-3 animate-rise">
               <div className="text-sm text-zinc-200 flex gap-2"><MapPin size={15} className="mt-0.5 text-emerald-400 shrink-0" /><span>{pick.label}<span className="block text-xs text-zinc-500 font-mono">{pick.lat.toFixed(5)}, {pick.lon.toFixed(5)}</span></span></div>
+              <SitePreview lat={pick.lat} lon={pick.lon} size={size} onMove={(lat, lon) => setPick({ ...pick, lat, lon })} />
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-3">
                   <label className="block text-xs text-zinc-500 mb-1 uppercase tracking-wider">Project name</label>
                   <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-xs text-zinc-500 mb-1 uppercase tracking-wider">Site size (square, centred on the address)</label>
+                  <label className="block text-xs text-zinc-500 mb-1 uppercase tracking-wider">Site size (a square on the map above)</label>
                   <select value={size} onChange={(e) => setSize(Number(e.target.value))} className={inputCls}>
                     {SITE_SIZES.map((s) => <option key={s.m} value={s.m}>{s.label}</option>)}
                   </select>
@@ -210,6 +211,51 @@ export default function StartDialog({ canClose, onClose, onOpenProject, onCreate
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+
+/**
+ * The satellite photo around the pick with the site square drawn on it, so the land can be
+ * checked before it is built. Clicking moves the square there: a street address often lands
+ * on the road, not on the land.
+ */
+function SitePreview({ lat, lon, size, onMove }: { lat: number; lon: number; size: number; onMove: (lat: number, lon: number) => void }) {
+  const W = 560, Hh = 240;
+  // the zoom where the square fills about two thirds of the box height
+  const mPerPxAt = (z: number) => (156543.03392 * Math.cos((lat * Math.PI) / 180)) / 2 ** z;
+  let z = 19;
+  while (z > 3 && size / mPerPxAt(z) > Hh * 0.62) z--;
+  const scale = 256 * 2 ** z;
+  const px = ((lon + 180) / 360) * scale;
+  const sinL = Math.sin((lat * Math.PI) / 180);
+  const py = (0.5 - Math.log((1 + sinL) / (1 - sinL)) / (4 * Math.PI)) * scale;
+  const x0 = px - W / 2, y0 = py - Hh / 2;
+  const tiles: { x: number; y: number; left: number; top: number }[] = [];
+  for (let tx = Math.floor(x0 / 256); tx <= Math.floor((x0 + W) / 256); tx++) for (let ty = Math.floor(y0 / 256); ty <= Math.floor((y0 + Hh) / 256); ty++) tiles.push({ x: tx, y: ty, left: tx * 256 - x0, top: ty * 256 - y0 });
+  const sq = size / mPerPxAt(z);
+  const click = (e: React.MouseEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const k = W / r.width;
+    const gx = x0 + (e.clientX - r.left) * k, gy = y0 + (e.clientY - r.top) * k;
+    const nlon = (gx / scale) * 360 - 180;
+    const n = Math.PI - (2 * Math.PI * gy) / scale;
+    const nlat = (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+    onMove(+nlat.toFixed(6), +nlon.toFixed(6));
+  };
+  return (
+    <div>
+      <div onClick={click} className="relative w-full overflow-hidden rounded-xl border border-white/10 cursor-crosshair bg-zinc-900" style={{ aspectRatio: `${W} / ${Hh}` }} data-site-preview title="Click to move the site here">
+        <div className="absolute inset-0" style={{ width: '100%', height: '100%' }}>
+          <div style={{ position: 'absolute', left: 0, top: 0, width: W, height: Hh, transform: 'scale(var(--k))', transformOrigin: '0 0' }} ref={(el) => { if (el && el.parentElement) el.style.setProperty('--k', String(el.parentElement.clientWidth / W)); }}>
+            {tiles.map((t) => <img key={`${t.x},${t.y}`} src={`/api/tile/${z}/${t.x}/${t.y}`} alt="" draggable={false} style={{ position: 'absolute', left: t.left, top: t.top, width: 256, height: 256 }} />)}
+            <div style={{ position: 'absolute', left: W / 2 - sq / 2, top: Hh / 2 - sq / 2, width: sq, height: sq, border: '2px solid #a7de75', boxShadow: '0 0 0 9999px rgba(7,11,8,0.35)' }} />
+            <div style={{ position: 'absolute', left: W / 2 - 4, top: Hh / 2 - 4, width: 8, height: 8, borderRadius: 8, background: '#a7de75' }} />
+          </div>
+        </div>
+      </div>
+      <div className="text-[11px] text-zinc-500 mt-1">The green square is the land that will be built. Click the photo to move it onto the property.</div>
     </div>
   );
 }

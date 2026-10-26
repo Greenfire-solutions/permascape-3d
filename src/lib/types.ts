@@ -38,9 +38,13 @@ export interface SiteObject {
   isFlowing?: boolean;
   waterLevel?: number; // pond water surface height (local metres)
   crop?: string; // garden beds: the library id of what is growing in it
+  status?: Status; // existing on the land, or proposed by the design (the default)
+  phase?: number; // build year: 1, 2 or 3
 }
 
-export type FeatureKind = 'path' | 'zone' | 'swale' | 'berm' | 'fence' | 'keyline' | 'sector' | 'paddock';
+export type Status = 'existing' | 'proposed';
+
+export type FeatureKind = 'path' | 'zone' | 'swale' | 'berm' | 'fence' | 'keyline' | 'sector' | 'paddock' | 'boundary';
 
 export type SectorType = 'sun-summer' | 'sun-winter' | 'wind' | 'cold-wind' | 'fire' | 'view' | 'noise' | 'wildlife' | 'flood' | 'frost';
 export type Animal = 'chickens' | 'ducks' | 'geese' | 'goats' | 'sheep' | 'pigs' | 'cattle' | 'rabbits' | 'bees';
@@ -64,6 +68,8 @@ export interface Feature {
   head?: number;
   restDays?: number;
   group?: string; // keyline lines made together share a group id
+  status?: Status;
+  phase?: number;
 }
 
 export interface Climate {
@@ -121,9 +127,51 @@ export interface Site {
   climate?: Climate | null;
   soil?: Soil | null;
   overrides?: { zone?: string; lastFrost?: string; firstFrost?: string };
+  surroundings?: Surroundings | null;
 }
 
-export type Overlay = 'none' | 'slope' | 'aspect' | 'elevation' | 'flow' | 'sun';
+/** Public map layers on and around the land, in local metres, clipped to the site square. */
+export interface Surroundings {
+  fetched: string;
+  errors: Record<string, string>;
+  sources: Record<string, string>;
+  flood?: { zone: string; sfha: boolean; floodway: boolean; label: string; ring: [number, number][] }[] | null;
+  wetlands?: { type: string; code: string; ring: [number, number][] }[] | null;
+  streams?: { name: string | null; kind: string; line: [number, number][] }[] | null;
+  soils?: SoilUnit[] | null;
+  osm?: {
+    buildings: { name: string | null; kind: string; ring: [number, number][] }[];
+    roads: { name: string | null; kind: string; surface: string | null; line: [number, number][] }[];
+    water: { name: string | null; kind: string; line?: [number, number][]; ring?: [number, number][] }[];
+  } | null;
+}
+
+export interface SoilUnit {
+  mukey: string; name: string; share: number; rings: [number, number][][];
+  drainage: string | null; hydgrp: string | null; flooding: string | null; ponding: number | null; slope: number | null;
+  bedrockCm: number | null; waterTableCm: number | null; pH: number | null; organicPct: number | null;
+}
+
+/** What the client wants, in their words: the designer's intake. */
+export interface Brief {
+  client?: string;
+  contact?: string;
+  people?: number;
+  hoursPerWeek?: number;
+  budget?: number;
+  years?: number;
+  water?: 'rain' | 'well' | 'mains' | 'spring' | 'creek';
+  animals?: string;
+  keep?: string;
+  problems?: string;
+  access?: string;
+  wants?: string;
+  notes?: string;
+}
+
+export interface WaterUse { people?: number; litresPerPerson?: number; supply?: Brief['water'] }
+
+export type Overlay = 'none' | 'slope' | 'aspect' | 'elevation' | 'flow' | 'sun' | 'soil';
 
 export interface Settings {
   exaggeration: number;
@@ -136,9 +184,10 @@ export interface Settings {
   grid: boolean;
   units: 'metric' | 'imperial';
   layers: Record<LayerId, boolean>;
+  phaseShown?: number; // show the design as built up to this year (3 shows everything)
 }
 
-export type LayerId = 'plants' | 'structures' | 'gardens' | 'water' | 'paths' | 'zones' | 'earthworks' | 'sectors';
+export type LayerId = 'plants' | 'structures' | 'gardens' | 'water' | 'paths' | 'zones' | 'earthworks' | 'sectors' | 'existing' | 'hazards';
 
 export interface DesignState {
   heights: Float32Array;
@@ -161,6 +210,10 @@ export interface Project {
   thumb?: string | null;
   goals?: string[];
   ai?: AiTurn[];
+  brief?: Brief;
+  prices?: Record<string, number>;
+  proposal?: string;
+  water?: WaterUse;
 }
 
 export interface AiAction {
@@ -172,11 +225,13 @@ export interface AiAction {
   y?: number;
   points?: [number, number][];
   zone?: number;
-  structure?: 'building' | 'greenhouse' | 'tank' | 'compost' | 'coop' | 'hive';
+  structure?: 'building' | 'shed' | 'greenhouse' | 'tank' | 'compost' | 'coop' | 'hive';
   size?: number; // radius for ponds, length for swales, capacity in litres for tanks
   width?: number;
   depth?: number;
   animal?: Animal;
+  head?: number; // how many animals in a paddock
+  phase?: number; // build year 1, 2 or 3
 }
 
 export interface AiTurn {
@@ -188,6 +243,9 @@ export interface AiTurn {
   actions: AiAction[];
   applied?: number[];
   seconds?: number;
+  // the critic's pass over a design: what it flagged, which proposals it dropped, what it added
+  critique?: { answer: string; dropped: number[]; added: number; seconds?: number } | null;
+  checks?: string[];
 }
 
 export const LAYER_OF: Record<ObjectType, LayerId> = {
@@ -202,8 +260,9 @@ export const DEFAULT_SETTINGS: Settings = {
   satellite: true,
   imageOpacity: 1,
   contours: true,
-  contourInterval: 1,
+  contourInterval: 0.6096,
   grid: false,
   units: 'imperial',
-  layers: { plants: true, structures: true, gardens: true, water: true, paths: true, zones: true, earthworks: true, sectors: true },
+  layers: { plants: true, structures: true, gardens: true, water: true, paths: true, zones: true, earthworks: true, sectors: true, existing: true, hazards: true },
+  phaseShown: 3,
 };

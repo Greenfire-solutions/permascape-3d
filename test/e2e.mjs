@@ -63,7 +63,7 @@ const typeInto = (sel, value) => js(`(() => { const el = document.querySelector(
 const mouse = async (type, x, y, extra = {}) => send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra });
 const clickAt = async (x, y, extra) => { await mouse('mouseMoved', x, y, { buttons: 0 }); await mouse('mousePressed', x, y, extra); await mouse('mouseReleased', x, y, extra); await sleep(150); };
 // the toolbar groups its tools: open the group, then press the tool
-const GROUPS = { select: ['select', 'measure'], water: ['contour', 'keyline', 'pond', 'swale', 'berm', 'tank', 'irrigation', 'water'], land: ['raise', 'lower', 'smooth', 'flatten'], plan: ['zone', 'sector', 'path', 'fence', 'paddock'], plants: ['plant', 'guild', 'hedge', 'garden'], build: ['building', 'greenhouse', 'compost', 'coop', 'hive'] };
+const GROUPS = { select: ['select', 'measure'], water: ['contour', 'keyline', 'pond', 'swale', 'berm', 'tank', 'irrigation', 'water'], land: ['raise', 'lower', 'smooth', 'flatten'], plan: ['zone', 'sector', 'path', 'fence', 'paddock', 'boundary'], plants: ['plant', 'guild', 'hedge', 'garden'], build: ['building', 'greenhouse', 'compost', 'coop', 'hive'] };
 const pickTool = async (id) => {
   const group = Object.keys(GROUPS).find((k) => GROUPS[k].includes(id));
   await js(`document.querySelector('[data-group=${group}]').click()`); await sleep(120);
@@ -286,15 +286,20 @@ try {
   await clickText('[data-plant-detail] button', 'Plant it on the land');
   check('plant it picks the plant tool', (await state()).tool === 'plant' && !(await js(`!!document.querySelector('[data-species]')`)));
   await clickSel('[data-nav=Calendar]');
-  check('the year calendar shows twelve months of jobs', !!(await until(`document.body.innerText.includes('The year on your land') && document.body.innerText.includes('December')`, 5000)));
+  check('the year calendar looks twelve months ahead', !!(await until(`document.body.innerText.includes('The year ahead on your land') && ['January', 'June', 'December'].every((m) => document.body.innerText.includes(m))`, 5000)));
   await clickText('button', 'Harvests');
   check('the harvest calendar fills from the plants', !!(await until(`document.body.innerText.includes('Plant') && document.querySelectorAll('.grid-cols-\\[220px_repeat\\(12\\2c 1fr\\)\\]').length >= 2`, 5000)) || !!(await until(`document.body.innerText.includes('Apple')`, 2000)));
   await shot('09-calendar');
   await clickSel('[data-nav=Water]');
-  check('the water budget runs month by month', !!(await until(`document.body.textContent.includes('Irrigation need') && document.body.textContent.includes('What this means')`, 5000)));
+  check('the water budget runs month by month', !!(await until(`document.body.textContent.includes('Water needed') && document.body.textContent.includes('What this means')`, 5000)));
+  await typeInto('[data-water-people]', '4');
+  check('household water joins the budget', !!(await until(`/house [1-9]/.test(document.body.textContent)`, 3000)));
+  await js(`(() => { const s = document.querySelector('[data-water-supply]'); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(s, 'well'); s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  check('a well covers what the tanks cannot', !!(await until(`/from the well|covers the need|the well is the backup/.test(document.body.textContent)`, 3000)));
   await shot('10-water');
   await clickSel('[data-nav=Review]');
-  check('the design review scores five areas', !!(await until(`document.querySelectorAll('[data-review-area]').length === 5`, 5000)));
+  check('the design review scores six areas, siting included', !!(await until(`document.querySelectorAll('[data-review-area]').length === 6 && !!document.querySelector('[data-review-area=siting]')`, 5000)));
+  check('the review gives no credit for what is not there', !(await js(`/Only 0 species|Zone 1 is far from the house/.test(document.body.innerText)`)));
   await shot('11-review');
   c0 = (await state()).objects.filter((o) => o.type === 'compost').length;
   if (await js(`!!document.querySelector('[data-fix=compost]')`)) {
@@ -304,18 +309,65 @@ try {
   await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
   await sleep(200);
 
+  console.log('\n== the client brief and the budget ==');
+  await clickSel('[data-nav=Brief]');
+  check('the brief opens', !!(await until(`!!document.querySelector('[data-brief-sheet]')`, 5000)));
+  await js(`(() => { const el = document.querySelector('[data-brief-notes]'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(el, 'Hi, we are Sam and Alex, four of us, 25k over three years, two goats and some hens, one bad knee.'); el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await clickSel('[data-brief-fill]');
+  check('Permie fills the brief from the client notes', !!(await until(`document.querySelector('[data-brief=client]')?.value === 'Sam and Alex Rivera' && document.querySelector('[data-brief=budget]')?.value === '25000'`, 15000)));
+  check('and says what is still worth asking', !!(await until(`!!document.querySelector('[data-brief-reply]')`, 3000)));
+  await typeInto('[data-profile-field=designer]', 'Test Designer');
+  await clickText('[data-profile] button', 'Save my details');
+  check('the designer details are saved for every project', !!(await until(`fetch('/api/profile').then((r) => r.json()).then((j) => j.designer === 'Test Designer')`, 5000)));
+  await clickSel('[data-nav=Budget]');
+  check('the budget prices the design by year', !!(await until(`!!document.querySelector('[data-budget]') && !!document.querySelector('[data-budget-year="1"]') && document.body.textContent.includes('All three years')`, 5000)));
+  check('and compares it with the client budget', !!(await until(`/under the \\$25,000 budget|over the \\$25,000 budget/.test(document.body.textContent)`, 3000)));
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await sleep(200);
+
+  console.log('\n== existing conditions, property line and the home ==');
+  await clickSel('[data-tab=site]');
+  check('the public maps load: flood, wetlands, streams, soils, roads', !!(await until(`!!document.querySelector('[data-existing]') && document.querySelector('[data-existing]').textContent.includes('Flood area')`, 120000)));
+  await pickTool('boundary');
+  for (const [x, y] of [[-90, -90], [90, -90], [90, 90], [-90, 90]]) { const p = await screen(x, y); await clickAt(p.x, p.y); }
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+  await sleep(300);
+  check('a property line is drawn and measured', (await state()).features.some((f) => f.kind === 'boundary') && !!(await until(`document.body.textContent.includes('Inside the property line')`, 3000)));
+  {
+    const sec = (await state()).features.filter((f) => f.kind === 'sector' && f.name.includes('sun'));
+    const house = (await state()).objects.find((o) => o.type === 'building');
+    check('the sun sectors radiate from the house', !!house && sec.length > 0 && sec.every((f) => Math.hypot(f.points[0][0] - house.x, f.points[0][1] - house.y) < 0.1), house ? `house ${house.x.toFixed(1)},${house.y.toFixed(1)}` : 'no house');
+    await pickTool('select');
+    const hp = await screen(house.x, house.y); const tp = await screen(house.x + 10, house.y - 10);
+    await mouse('mouseMoved', hp.x, hp.y, { buttons: 0 }); await mouse('mousePressed', hp.x, hp.y);
+    for (let k = 1; k <= 10; k++) await mouse('mouseMoved', hp.x + ((tp.x - hp.x) * k) / 10, hp.y + ((tp.y - hp.y) * k) / 10);
+    await mouse('mouseReleased', tp.x, tp.y); await sleep(300);
+    const h2 = (await state()).objects.find((o) => o.id === house.id);
+    const sec2 = (await state()).features.filter((f) => f.kind === 'sector' && f.name.includes('sun'));
+    check('and follow it when it moves', sec2.every((f) => Math.hypot(f.points[0][0] - h2.x, f.points[0][1] - h2.y) < 0.1) && Math.hypot(h2.x - house.x, h2.y - house.y) > 3);
+    check('the building editor speaks feet', !!(await until(`!!document.querySelector('[data-dim=width]') && document.body.innerText.includes('Width (ft)')`, 3000)));
+    check('every element can be existing or in year 1, 2 or 3', !!(await until(`!!document.querySelector('[data-status-phase]')`, 2000)));
+  }
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+
   console.log('\n== Permie, the AI designer (canned answers in tests) ==');
   await clickSel('[data-permie-open]');
   check('Permie opens', !!(await until(`!!document.querySelector('[data-permie]')`, 3000)));
   await clickText('[data-permie] button', 'Draw me a design');
-  check('a proposal comes back with its changes', !!(await until(`document.querySelectorAll('[data-turn] input[type=checkbox]').length === 4`, 20000)));
+  check('the proposal steps aside so the land shows', !!(await until(`!!document.querySelector('[data-permie-compact]')`, 20000)));
   check('the proposal previews on the land first', !!(await until(`document.body.innerText.includes('Previewing')`, 3000)));
+  check('Permie checks its own design', !!(await until(`/Checked: 1 removed, 1 added/.test(document.querySelector('[data-permie-compact]')?.innerText || '')`, 20000)));
   await shot('12-permie');
+  await clickSel('[data-permie-expand]');
+  check('a proposal comes back with its changes', !!(await until(`document.querySelectorAll('[data-turn] input[type=checkbox]').length === 6`, 5000)));
+  check('the critic says what it changed', !!(await until(`!!document.querySelector('[data-critique]') && document.querySelector('[data-critique]').innerText.includes('Dropped the tank')`, 3000)));
   const before4 = await state();
-  await clickText('[data-permie] button', 'Add 4 to my design');
+  await clickText('[data-permie] button', 'Add 6 to my design');
   await sleep(400);
   st = await state();
-  check('applying adds the zone, guild, tank and swale', st.features.length === before4.features.length + 2 && st.objects.length >= before4.objects.length + 6, `${st.features.length - before4.features.length} features, ${st.objects.length - before4.objects.length} objects`);
+  const goats = st.features.find((f) => f.kind === 'paddock' && f.animal === 'goats');
+  check('applying adds the zone, guild, tank, swale, paddock and shelter', st.features.length === before4.features.length + 3 && st.objects.length >= before4.objects.length + 7, `${st.features.length - before4.features.length} features, ${st.objects.length - before4.objects.length} objects`);
+  check('the client numbers are kept: 2 goats, a 3 by 4 m shelter, year 2', goats?.head === 2 && goats?.phase === 2 && st.objects.some((o) => o.name === 'Goat shelter' && o.width === 3 && o.depth === 4));
   await clickSel("button[title^='Undo']"); await sleep(200);
   st = await state();
   check('one Undo takes the whole proposal back', st.objects.length === before4.objects.length && st.features.length === before4.features.length);
@@ -326,11 +378,17 @@ try {
   console.log('\n== tasks, summary and report ==');
   await clickSel('[data-tab=tasks]');
   check('tasks panel opens', !!(await until(`document.body.innerText.includes('worked out from each plant')`, 3000)));
+  check('the season watch reads the forecast', !!(await until(`!!document.querySelector('[data-season-watch]') && !document.querySelector('[data-season-watch]').innerText.includes('Reading the forecast')`, 20000)));
+  check('the same job on many plants is one line', await js(`(() => { const ls = [...document.querySelectorAll('[data-task]')].map((t) => t.textContent.replace(/ [0-9]+$/, '')); return new Set(ls).size === ls.length; })()`), String(await js(`document.querySelectorAll('[data-task]').length`)) + ' tasks');
   await clickSel('[data-tab=inspect]');
   await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
   await pickTool('select');
   await clickText('button', 'Open the full site report');
-  check('site report renders', !!(await until(`document.querySelector('.report-root') && document.body.innerText.includes('Planting schedule')`, 5000)));
+  check('site report renders', !!(await until(`document.querySelector('.report-root') && document.body.innerText.includes('Planting plan')`, 5000)));
+  check('the report carries the plan drawing to scale', !!(await until(`[...document.querySelectorAll('.report-root img')].some((i) => i.alt.startsWith('Plan of the design') && i.naturalWidth > 3000)`, 8000)));
+  check('the report carries the brief and the budget by year', !!(await until(`document.body.innerText.includes('The brief') && document.body.innerText.includes('Budget:') && document.body.innerText.includes('Year 1')`, 3000)));
+  await clickSel('[data-draft]');
+  check('Permie drafts the cover letter', !!(await until(`document.querySelector('[data-proposal] textarea')?.value.includes('Test proposal letter')`, 15000)));
   await shot('07-report');
   await clickText('button', 'Close');
 

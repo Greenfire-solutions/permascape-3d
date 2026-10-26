@@ -78,25 +78,45 @@ async function api(req, res, url) {
   if (p === '/api/climate') return send(res, 200, await sources.climate(num(q.get('lat'), -90, 90), num(q.get('lon'), -180, 180)));
   if (p === '/api/wildplants') return send(res, 200, await sources.wildPlants(num(q.get('lat'), -90, 90), num(q.get('lon'), -180, 180)));
   if (p === '/api/wind') return send(res, 200, await sources.wind(num(q.get('lat'), -90, 90), num(q.get('lon'), -180, 180)));
+  if (p === '/api/surroundings') return send(res, 200, await sources.surroundings(num(q.get('lat'), -90, 90), num(q.get('lon'), -180, 180), num(q.get('size'), 20, 5000)));
+  if (p === '/api/forecast') return send(res, 200, await sources.forecast(num(q.get('lat'), -90, 90), num(q.get('lon'), -180, 180)));
 
   if (p === '/api/ai/status') return send(res, 200, { available: !!claudeBinary(), engine: 'Claude Code on this Mac' });
   if (p === '/api/ai' && req.method === 'POST') {
     const body = JSON.parse(await readBody(req, 2 * 1024 * 1024));
-    const mode = body.mode === 'design' ? 'design' : 'ask';
-    const question = String(body.question || '').slice(0, 4000);
-    if (mode === 'ask' && !question.trim()) return send(res, 400, { error: 'Type a question first.' });
+    const mode = ['design', 'critic', 'brief', 'proposal'].includes(body.mode) ? body.mode : 'ask';
+    const question = String(body.question || '').slice(0, mode === 'brief' ? 20000 : 4000);
+    if ((mode === 'ask' || mode === 'brief') && !question.trim()) return send(res, 400, { error: mode === 'brief' ? 'Paste the client notes first.' : 'Type a question first.' });
+    const proposal = Array.isArray(body.proposal) ? body.proposal.slice(0, 80) : [];
     if (process.env.PERMASCAPE_FAKE_AI) {
+      if (mode === 'critic') return send(res, 200, { answer: 'Checked the plants, the water and the siting. Dropped the tank (too close to the swale) and moved it.', drop: proposal.length > 2 ? [2] : [], actions: [{ kind: 'structure', label: 'Rain tank, moved', why: 'Clear of the swale', structure: 'tank', x: -14, y: 6, size: 8000, phase: 1 }], seconds: 0 });
+      if (mode === 'brief') return send(res, 200, { answer: 'Filled in the client, people, budget and animals. Still worth asking: how many hours a week they have.', brief: { client: 'Sam and Alex Rivera', people: 4, budget: 25000, years: 3, water: 'well', animals: '2 dairy goats, 15 hens', access: 'Level paths for a bad knee', goals: ['Self-reliant homestead', 'Animals and pasture'] }, actions: [], seconds: 0 });
+      if (mode === 'proposal') return send(res, 200, { answer: 'Dear Sam and Alex,\n\nThank you for walking the land with me. Test proposal letter.\n\nWarmly,\nYour designer', actions: [], seconds: 0 });
       // tests: a canned, well-formed proposal so the whole apply path runs without a Claude call
       return send(res, 200, { answer: `Test answer for: ${question || mode}`, actions: [
-        { kind: 'zone', label: 'Zone 1: kitchen garden', why: 'Next to the door', zone: 1, points: [[-6, -6], [6, -6], [6, 6], [-6, 6]] },
+        { kind: 'zone', label: 'Zone 1: kitchen garden', why: 'Next to the door', zone: 1, points: [[-6, -6], [6, -6], [6, 6], [-6, 6]], phase: 1 },
         { kind: 'guild', label: 'Apple guild', why: 'Sunny and sheltered', species: 'apple', x: 12, y: 10 },
         { kind: 'structure', label: 'Rain tank', why: 'Catch the roof', structure: 'tank', x: -10, y: 8, size: 8000 },
-        { kind: 'swale', label: 'Upper swale', why: 'Slow the runoff', x: 0, y: 15, size: 30 },
+        { kind: 'swale', label: 'Upper swale', why: 'Slow the runoff', x: 0, y: 15, size: 30, phase: 1 },
+        { kind: 'paddock', label: 'Goat paddock', why: 'Room to rotate', animal: 'goats', head: 2, points: [[20, -30], [40, -30], [40, -10], [20, -10]], phase: 2 },
+        { kind: 'structure', label: 'Goat shelter', why: 'Out of the wind', structure: 'shed', x: 30, y: -34, width: 3, depth: 4, phase: 2 },
       ], seconds: 0 });
     }
-    return send(res, 200, await askClaude({ mode, question, context: body.context, model: body.model }));
+    return send(res, 200, await askClaude({ mode, question, context: body.context, model: body.model, proposal }));
   }
   if (p === '/api/soil') return send(res, 200, await sources.soil(num(q.get('lat'), -90, 90), num(q.get('lon'), -180, 180)));
+
+  // the designer's own name and business, printed on every plan and report
+  if (p === '/api/profile') {
+    const file = path.join(DATA, 'profile.json');
+    if (req.method === 'PUT') {
+      const body = JSON.parse(await readBody(req, 64 * 1024));
+      const clean = Object.fromEntries(['designer', 'business', 'contact', 'website'].map((k) => [k, String(body[k] ?? '').slice(0, 200)]));
+      fs.writeFileSync(file, JSON.stringify(clean));
+      return send(res, 200, clean);
+    }
+    return send(res, 200, fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {});
+  }
 
   if (p === '/api/projects' && req.method === 'GET') {
     const list = fs.readdirSync(PROJECTS).filter((f) => f.endsWith('.json')).map((f) => {

@@ -5,7 +5,7 @@ import { LIBRARY, CATEGORY_NAMES, Category, Species } from '../lib/library';
 import { advise, Advice, SiteClimate, ZoneConditions, rangesText, doyLabel, Range, jobsBetween } from '../lib/advisor';
 import { ZONES } from '../lib/zoneInfo';
 import { ZONE_COLORS, ZONE_NAMES } from '../lib/mapTexture';
-import { fmtArea, fmtRain, Units } from '../lib/units';
+import { fmtArea, fmtRain, fmtTemp, Units, localizeText } from '../lib/units';
 
 export interface WildPlants { total: number; radiusKm: number; species: { key: number; records: number; latin: string; name: string | null; family: string | null }[]; source: string }
 
@@ -46,7 +46,8 @@ function Strip({ a, today }: { a: Advice; today: number }) {
   );
 }
 
-function Card({ a, today, onPlace, pz }: { a: Advice; today: number; onPlace: Props['onPlace']; pz: number }) {
+function Card({ a, today, onPlace, pz, units }: { a: Advice; today: number; onPlace: Props['onPlace']; pz: number; units: Units }) {
+  const T = (t: string) => localizeText(t, units);
   const [open, setOpen] = useState(false);
   const sp = a.species;
   const S = STATUS[a.status];
@@ -67,26 +68,26 @@ function Card({ a, today, onPlace, pz }: { a: Advice; today: number; onPlace: Pr
         <div className="mt-2 space-y-1">
           <Strip a={a} today={today} />
           {a.calendar.filter((l) => l.kind !== 'note').map((l, i) => (
-            <div key={i} className="text-xs text-zinc-300"><span className="inline-block w-2 h-2 rounded-sm mr-1.5" style={{ background: KIND_COLOR[l.kind] }} /><b className="font-medium">{l.label}:</b> {rangesText(l.ranges)}{l.text ? <span className="text-zinc-500">. {l.text}</span> : null}</div>
+            <div key={i} className="text-xs text-zinc-300"><span className="inline-block w-2 h-2 rounded-sm mr-1.5" style={{ background: KIND_COLOR[l.kind] }} /><b className="font-medium">{l.label}:</b> {rangesText(l.ranges)}{l.text ? <span className="text-zinc-500">. {T(l.text)}</span> : null}</div>
           ))}
         </div>
       )}
       <div className="mt-2 space-y-0.5">
-        {a.issues.filter((i) => i.level === 'fail').map((i, k) => <div key={k} className="text-xs text-red-300 flex gap-1"><XCircle size={12} className="mt-0.5 shrink-0" />{i.text}</div>)}
-        {a.issues.filter((i) => i.level === 'warn').map((i, k) => <div key={k} className="text-xs text-amber-300 flex gap-1"><AlertTriangle size={12} className="mt-0.5 shrink-0" />{i.text}</div>)}
-        {a.variety && a.status !== 'no' && <div className="text-xs text-emerald-300 flex gap-1"><Leaf size={12} className="mt-0.5 shrink-0" />{a.variety}</div>}
+        {a.issues.filter((i) => i.level === 'fail').map((i, k) => <div key={k} className="text-xs text-red-300 flex gap-1"><XCircle size={12} className="mt-0.5 shrink-0" />{T(i.text)}</div>)}
+        {a.issues.filter((i) => i.level === 'warn').map((i, k) => <div key={k} className="text-xs text-amber-300 flex gap-1"><AlertTriangle size={12} className="mt-0.5 shrink-0" />{T(i.text)}</div>)}
+        {a.variety && a.status !== 'no' && <div className="text-xs text-emerald-300 flex gap-1"><Leaf size={12} className="mt-0.5 shrink-0" />{T(a.variety)}</div>}
       </div>
       {open && (
         <div className="mt-2 space-y-0.5 text-xs">
-          {a.good.map((g, k) => <div key={k} className="text-zinc-400 flex gap-1"><CheckCircle2 size={12} className="mt-0.5 shrink-0 text-emerald-500" />{g}</div>)}
-          {a.issues.filter((i) => i.level === 'info').map((i, k) => <div key={k} className="text-zinc-400 flex gap-1"><Info size={12} className="mt-0.5 shrink-0 text-sky-400" />{i.text}</div>)}
-          {sp.notes && <div className="text-zinc-400">{sp.notes}</div>}
+          {a.good.map((g, k) => <div key={k} className="text-zinc-400 flex gap-1"><CheckCircle2 size={12} className="mt-0.5 shrink-0 text-emerald-500" />{T(g)}</div>)}
+          {a.issues.filter((i) => i.level === 'info').map((i, k) => <div key={k} className="text-zinc-400 flex gap-1"><Info size={12} className="mt-0.5 shrink-0 text-sky-400" />{T(i.text)}</div>)}
+          {sp.notes && <div className="text-zinc-400">{T(sp.notes)}</div>}
           <div className="text-zinc-500">{sp.functions.join(' · ')}</div>
-          <div className="text-zinc-500">Mature size {sp.heightM} m tall, {sp.spreadM} m wide · water {sp.water} · sun {sp.sun}{sp.ph ? ` · pH ${sp.ph[0]} to ${sp.ph[1]}` : ''}</div>
+          <div className="text-zinc-500">{T(`Mature size ${sp.heightM} m tall, ${sp.spreadM} m wide`)} · water {sp.water} · sun {sp.sun}{sp.ph ? ` · pH ${sp.ph[0]} to ${sp.ph[1]}` : ''}</div>
         </div>
       )}
       <div className="mt-2 flex items-center gap-2 flex-wrap">
-        <span className="text-[11px] text-zinc-500">{a.spacing}{a.fits ? (annual ? ` · about ${a.fits.toLocaleString()} per 1.2 x 4 m bed` : ` · room for about ${a.fits.toLocaleString()} in this zone`) : ''}</span>
+        <span className="text-[11px] text-zinc-500">{T(`${a.spacing}${a.fits ? (annual ? ` · about ${a.fits.toLocaleString()} per 1.2 x 4 m bed` : ` · room for about ${a.fits.toLocaleString()} in this zone`) : ''}`)}</span>
         <button onClick={() => setOpen(!open)} className="text-[11px] text-zinc-400 hover:text-zinc-200 ml-auto">{open ? 'Less' : 'Why and how'}</button>
         {a.status !== 'no' && pz > 0 && (annual ? (
           <button onClick={() => onPlace(sp, 'bed', a)} className="text-[11px] px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1"><LayoutGrid size={12} /> Add a bed</button>
@@ -152,10 +153,10 @@ export default function ZoneGuide({ zone, site, sc, zc, measuring, units, viewDa
             {sc ? (
               <div className="space-y-1.5">
                 <div className="text-[11px] uppercase tracking-wider text-zinc-500 flex items-center gap-1"><Thermometer size={12} /> Your climate</div>
-                <Row k="Hardiness zone" v={<>{sc.zoneLabel}{zc && zc.zoneShift ? <span className="text-emerald-400"> ({zc.zoneShift > 0 ? '+' : ''}{zc.zoneShift} here)</span> : null}</>} sub={sc.zoneSource} />
-                <Row k="Frost" v={sc.frostFree ? 'Frost free' : `last ${doyLabel(sc.lastMean!)}, first ${doyLabel(sc.firstMean!)}`} sub={sc.frostFree ? '' : `safe dates (9 years in 10): after ${doyLabel(sc.lastSafe!)}, before ${doyLabel(sc.firstSafe!)}. ${sc.frostFreeDays} safe days.`} />
-                <Row k="Winter chill" v={sc.chill != null ? `${sc.chill.toLocaleString()} hours` : 'unknown'} sub="hours between 0 and 7 C; fruit trees need enough to flower" />
-                <Row k="Summer heat" v={`${Math.round(sc.hottestMaxC)} C hottest-month highs`} sub={sc.gdd != null ? `${sc.gdd.toLocaleString()} growing degree days` : ''} />
+                <Row k="Hardiness zone" v={<>{sc.zoneLabel}{zc && zc.zoneShift ? <span className="text-emerald-400" title="The ground in this zone runs warmer or colder than the area's climate, from its slope, aspect and height"> ({Math.abs(zc.zoneShift) >= 1 ? `${Math.abs(zc.zoneShift)} zone${Math.abs(zc.zoneShift) > 1 ? 's' : ''}` : 'half a zone'} {zc.zoneShift > 0 ? 'warmer' : 'colder'} here)</span> : null}</>} sub={sc.zoneSource} />
+                <Row k="Frost" v={sc.frostFree ? 'Frost free' : `last ${doyLabel(sc.lastMean!)}, first ${doyLabel(sc.firstMean!)}`} sub={sc.frostFree ? '' : `safe dates (9 years in 10): after ${doyLabel(sc.lastSafe!)}, before ${doyLabel(sc.firstSafe!)}. About ${(sc.firstMean! - sc.lastMean! + 365) % 365} frost-free days in an average year, ${sc.frostFreeDays} in 9 years out of 10.`} />
+                <Row k="Winter chill" v={sc.chill != null ? `${sc.chill.toLocaleString()} hours` : 'unknown'} sub={localizeText('hours between 0 and 7 C; fruit trees need enough to flower', units)} />
+                <Row k="Summer heat" v={`${fmtTemp(sc.hottestMaxC, units)} hottest-month highs`} sub={sc.gdd != null ? `${sc.gdd.toLocaleString()} growing degree days` : ''} />
                 <Row k="Rain" v={`${fmtRain(sc.annualPrecipMm, units)} a year`} sub={sc.wetSeason?.allYear ? 'spread through the year' : sc.wetSeason?.startMonth ? `rainy season from ${new Date(2023, sc.wetSeason.startMonth - 1).toLocaleDateString('en-US', { month: 'long' })}` : 'no reliable rainy season'} />
                 {sc.koppen && <Row k="Climate type" v={sc.koppen.name} sub={`Koppen ${sc.koppen.code}${sc.humid ? ', humid summers' : ''}${sc.arid ? ', dry' : ''}`} />}
                 <button onClick={onSiteSettings} className="text-xs text-emerald-400 hover:underline">Know your real zone or frost dates? Set them</button>
@@ -169,11 +170,11 @@ export default function ZoneGuide({ zone, site, sc, zc, measuring, units, viewDa
                   <Row k="Direct sun" v={zc.sunHours != null ? `${zc.sunHours.toFixed(1)} hours a day` : measuring ? 'measuring...' : 'not measured'} sub="growing-season average, with shade from land, trees and buildings" />
                   <Row k="Drainage lines" v={`${Math.round(zc.wetFraction * 100)}% of the zone`} />
                   {site.soil?.available && <Row k="Soil" v={site.soil.topsoilTexture || site.soil.mapUnit} sub={`${site.soil.drainage || ''}${site.soil.pH != null ? `, pH ${site.soil.pH}` : ''}`} />}
-                  {zc.notes.map((t, i) => <div key={i} className="text-xs text-zinc-300 bg-zinc-900 border border-zinc-800 rounded p-2">{t}</div>)}
+                  {zc.notes.map((t, i) => <div key={i} className="text-xs text-zinc-300 bg-zinc-900 border border-zinc-800 rounded p-2">{localizeText(t, units)}</div>)}
                 </>
               ) : <div className="text-xs text-zinc-500">Measuring the ground...</div>}
             </div>
-            {sc && <div className="text-[10px] text-zinc-600">{sc.notes.join(' ')}</div>}
+            {sc && <div className="text-[10px] text-zinc-600">{localizeText(sc.notes.join(' '), units)}</div>}
           </aside>
 
           {/* right: the plants */}
@@ -208,7 +209,7 @@ export default function ZoneGuide({ zone, site, sc, zc, measuring, units, viewDa
                   {!sc ? <div className="text-zinc-500 text-sm">The guide needs the site's climate. {site.lat == null ? 'Load a real address first.' : 'Loading...'}</div> : shown.length === 0 ? (
                     <div className="text-zinc-500 text-sm">Nothing matches. {thisMonth ? `Nothing in this zone is planted in ${monthName}; turn off the month filter.` : ''}</div>
                   ) : (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">{shown.map((a) => <Card key={a.species.id} a={a} today={today} onPlace={onPlace} pz={n} />)}</div>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">{shown.map((a) => <Card key={a.species.id} a={a} today={today} onPlace={onPlace} pz={n} units={units} />)}</div>
                   )}
                   {n === 4 && <div className="mt-6"><div className="text-sm text-zinc-300 mb-2">Already growing wild near you, worth encouraging in zone 4:</div><WildList wild={wild} /></div>}
                 </div>

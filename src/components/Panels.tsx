@@ -3,18 +3,21 @@ import {
   BoxSelect, Trash2, Copy, MountainSnow, Mountain, Waves, Droplets, CloudRain, Play, Pause, Eraser, TreePine, Home,
   MapPin, CloudSun, Layers, Activity, ListChecks, BarChart3, Route, Hexagon, Ruler, Sun, AlertTriangle, CheckCircle2, BookOpen, Plus, Sprout, Pencil,
 } from 'lucide-react';
-import type { Feature, SiteObject, Settings, Site, LayerId, JournalEvent, Overlay } from '../lib/types';
+import type { Feature, SiteObject, Settings, Site, LayerId, JournalEvent, Overlay, SoilUnit } from '../lib/types';
 import { SPECIES, SPECIES_BY_ID, LAYER_NAMES, zoneFit, Layer } from '../lib/plants';
 import { SLOPE_CLASSES, COMPASS, polygonArea, polylineLength } from '../lib/terrain';
 import { ZONE_COLORS, ZONE_NAMES } from '../lib/mapTexture';
-import { fmtLen, fmtArea, fmtWater, fmtRain, fmtTemp, fmtVol, Units } from '../lib/units';
+import { fmtLen, fmtArea, fmtWater, fmtRain, fmtTemp, fmtVol, Units, localizeText, contourChoices, lenIn, lenOut } from '../lib/units';
 import { designSummary, monthTasks, Task } from '../lib/summary';
 import { ModelContext, plantSize } from '../lib/models';
 import { uid } from '../lib/api';
 import { advise, rangesText, SiteClimate, doyLabel } from '../lib/advisor';
 import type { Tool, WaterSettings } from './Viewport3D';
 import { SidebarPanel, Slider, Field, inputCls, Toggle, Btn, Stat, ConfirmBtn, Segmented } from './ui';
-import { guildSpecies, hedgeSpecies, SECTOR_STYLE, ANIMALS, bearing, effectiveZone } from '../lib/permaculture';
+import { guildSpecies, hedgeSpecies, SECTOR_STYLE, ANIMALS, bearing, effectiveZone, FitFn } from '../lib/permaculture';
+import { soilColor } from '../lib/mapTexture';
+import type { WatchItem } from '../lib/season';
+import { CloudLightning, Snowflake, Map as MapIcon2 } from 'lucide-react';
 import { Compass, Fence, PawPrint, Rows3, Trees, TreeDeciduous } from 'lucide-react';
 import type { Animal, SectorType } from '../lib/types';
 
@@ -36,7 +39,7 @@ export const DEFAULT_TOOL_OPTS: ToolOpts = {
 };
 
 const TYPE_NAMES: Record<string, string> = {
-  guild: 'Tree guild', hedge: 'Hedgerow', fence: 'Fence', keyline: 'Keyline pattern', sector: 'Sector', paddock: 'Paddock',
+  guild: 'Tree guild', hedge: 'Hedgerow', fence: 'Fence', keyline: 'Keyline pattern', sector: 'Sector', paddock: 'Paddock', boundary: 'Property line',
   plant: 'Plant', building: 'Building', greenhouse: 'Greenhouse', tank: 'Water tank', pond: 'Pond', garden: 'Garden bed',
   compost: 'Compost bays', coop: 'Chicken coop', hive: 'Beehive', irrigation: 'Irrigation emitter',
 };
@@ -45,8 +48,9 @@ export const typeName = (t: string) => TYPE_NAMES[t] || t;
 const EVENT_TYPES: JournalEvent['type'][] = ['watered', 'pruned', 'fed', 'mulched', 'harvested', 'issue', 'treated', 'note', 'planted', 'built'];
 
 // ------------------------------------------------------------------ tool options
-export function ToolPanel({ tool, o, set, water, setWater, units, site, grid }: {
+export function ToolPanel({ tool, o, set, water, setWater, units, site, grid, fit, present = [], onImportBoundary }: {
   tool: Tool; o: ToolOpts; set: (p: Partial<ToolOpts>) => void; water: WaterSettings; setWater: (p: Partial<WaterSettings>) => void; units: Units; site: Site; grid: { size: number };
+  fit?: FitFn; present?: string[]; onImportBoundary?: () => void;
 }) {
   const L = (m: number) => fmtLen(m, units);
   const maxBrush = Math.max(20, Math.round(grid.size / 4));
@@ -93,6 +97,13 @@ export function ToolPanel({ tool, o, set, water, setWater, units, site, grid }: 
       <p className="text-xs text-zinc-500">Click and drag to draw a path. It is painted onto the ground.</p>
     </SidebarPanel>
   );
+  if (tool === 'boundary') return (
+    <SidebarPanel title="Property line" icon={MapIcon2}>
+      <p className="text-xs text-zinc-400">Click each corner of the property, then double-click or press Enter. Everything outside it is dimmed, the area is measured, and anything placed outside is flagged in the review.</p>
+      {onImportBoundary && <Btn className="w-full" onClick={onImportBoundary}>Import it from a KML or GeoJSON file</Btn>}
+      <p className="text-[11px] text-zinc-500">Most counties publish parcel lines on their GIS map. Download the parcel as KML or GeoJSON, or trace it from the satellite photo.</p>
+    </SidebarPanel>
+  );
   if (tool === 'zone') return (
     <SidebarPanel title="Permaculture zone" icon={Hexagon}>
       <Field label="Zone">
@@ -111,7 +122,7 @@ export function ToolPanel({ tool, o, set, water, setWater, units, site, grid }: 
   if (tool === 'guild') {
     const centres = SPECIES.filter((sp) => ['fruit-tree', 'nut-tree'].includes(sp.category) && sp.life === 'perennial').sort((a, b) => a.name.localeCompare(b.name));
     const c = SPECIES_BY_ID[o.guildTree];
-    const members = c ? guildSpecies(c, zone) : [];
+    const members = c ? guildSpecies(c, zone, fit) : [];
     return (
       <SidebarPanel title="Tree guild" icon={TreeDeciduous}>
         <Field label="Centre tree">
@@ -134,7 +145,7 @@ export function ToolPanel({ tool, o, set, water, setWater, units, site, grid }: 
     );
   }
   if (tool === 'hedge') {
-    const auto = hedgeSpecies(zone);
+    const auto = hedgeSpecies(zone, fit, present);
     const tallOpts = SPECIES.filter((sp) => sp.life === 'perennial' && sp.heightM >= 4).sort((a, b) => a.name.localeCompare(b.name));
     const lowOpts = SPECIES.filter((sp) => sp.life === 'perennial' && sp.layer === 'shrub').sort((a, b) => a.name.localeCompare(b.name));
     return (
@@ -151,7 +162,7 @@ export function ToolPanel({ tool, o, set, water, setWater, units, site, grid }: 
             {lowOpts.map((sp) => <option key={sp.id} value={sp.id}>{sp.name}</option>)}
           </select>
         </Field>
-        <p className="text-xs text-zinc-500">Drag a line across the wind. A windbreak shelters about ten times its height downwind; put it on the side your wind sector comes from.</p>
+        <p className="text-xs text-zinc-500">Drag a line across the wind. A windbreak shelters about ten times its height downwind; put it on the side your wind sector comes from. The best-for-my-site picks suit your climate and soil, never spread, and never host a disease of what you have planted.</p>
       </SidebarPanel>
     );
   }
@@ -185,7 +196,7 @@ export function ToolPanel({ tool, o, set, water, setWater, units, site, grid }: 
         </select>
       </Field>
       <Slider label="How many" value={o.paddockHead} min={1} max={200} onChange={(v) => set({ paddockHead: v })} />
-      <p className="text-xs text-zinc-500">{ANIMALS[o.paddockAnimal].note} Click corners like a zone; double-click or Enter to close.</p>
+      <p className="text-xs text-zinc-500">{localizeText(ANIMALS[o.paddockAnimal].note, units)} Click corners like a zone; double-click or Enter to close.</p>
     </SidebarPanel>
   );
   if (['building', 'greenhouse', 'garden'].includes(tool)) return (
@@ -302,8 +313,23 @@ function WaterPanel({ water, setWater, o, set, units, maxBrush }: { water: Water
 }
 
 // ------------------------------------------------------------------ selected object
-export function ObjectPanel({ o, onChange, onDelete, onDuplicate, site, units, ctx, viewDay, sc }: {
+/** Existing on the land, or proposed in build year 1, 2 or 3. */
+export function StatusPhase({ status, phase, onChange }: { status?: string; phase?: number; onChange: (p: { status?: 'existing' | 'proposed'; phase?: number }) => void }) {
+  const v = status === 'existing' ? 'e' : String(phase ?? 1);
+  return (
+    <div data-status-phase>
+      <div className="text-[11px] uppercase tracking-[0.08em] text-zinc-400 font-semibold mb-1">On the land</div>
+      <Segmented value={v} onChange={(x) => onChange(x === 'e' ? { status: 'existing' } : { status: 'proposed', phase: Number(x) })}
+        options={[{ id: 'e', label: 'Existing', title: 'Already there: kept, not priced' }, { id: '1', label: 'Year 1' }, { id: '2', label: 'Year 2' }, { id: '3', label: 'Year 3' }]} />
+    </div>
+  );
+}
+
+export interface PondCatchment { areaM2: number; runoffL: number; spillwayM: number; fillsTimes: number }
+
+export function ObjectPanel({ o, onChange, onDelete, onDuplicate, site, units, ctx, viewDay, sc, catchment, issues = [] }: {
   o: SiteObject; onChange: (p: Partial<SiteObject>) => void; onDelete: () => void; onDuplicate: () => void; site: Site; units: Units; ctx: ModelContext; viewDay: string; sc?: SiteClimate | null;
+  catchment?: PondCatchment | null | 'working'; issues?: string[];
 }) {
   const cropId = o.type === 'garden' ? o.crop : o.type === 'plant' ? o.species : undefined;
   const calendar = useMemo(() => (sc && cropId && SPECIES_BY_ID[cropId] ? advise(SPECIES_BY_ID[cropId], sc, null, o.type === 'garden' ? 1 : 2, site.soil) : null), [sc, cropId, site.soil]);
@@ -318,6 +344,8 @@ export function ObjectPanel({ o, onChange, onDelete, onDuplicate, site, units, c
   return (
     <SidebarPanel title={`Selected: ${typeName(o.type)}`} icon={BoxSelect}>
       <Field label="Name"><input value={o.name} onChange={(e) => onChange({ name: e.target.value })} className={inputCls} /></Field>
+      <StatusPhase status={o.status} phase={o.phase} onChange={onChange} />
+      {issues.map((t, i) => <div key={i} className="text-xs text-amber-200 bg-amber-400/10 border border-amber-400/25 rounded-lg p-2 flex gap-1.5"><AlertTriangle size={13} className="mt-0.5 shrink-0" />{localizeText(t, units)}</div>)}
       {sp && (
         <>
           <Field label="Species">
@@ -348,8 +376,8 @@ export function ObjectPanel({ o, onChange, onDelete, onDuplicate, site, units, c
         <div className="text-xs bg-zinc-900/60 border border-zinc-800 rounded p-2 space-y-0.5">
           <div className={calendar.status === 'good' ? 'text-emerald-400' : calendar.status === 'possible' ? 'text-amber-400' : 'text-red-400'}>{calendar.status === 'good' ? 'Grows well here' : calendar.status === 'possible' ? 'Possible with care' : 'Not suited to this site'}</div>
           {calendar.calendar.filter((l) => l.kind !== 'note').map((l, i) => <div key={i} className="text-zinc-300"><b className="font-medium">{l.label}:</b> {rangesText(l.ranges)}</div>)}
-          {calendar.issues.filter((i) => i.level !== 'info').slice(0, 2).map((i, k) => <div key={k} className="text-amber-300">{i.text}</div>)}
-          {calendar.variety && <div className="text-emerald-300">{calendar.variety}</div>}
+          {calendar.issues.filter((i) => i.level !== 'info').slice(0, 2).map((i, k) => <div key={k} className="text-amber-300">{localizeText(i.text, units)}</div>)}
+          {calendar.variety && <div className="text-emerald-300">{localizeText(calendar.variety, units)}</div>}
         </div>
       )}
       <div className="grid grid-cols-2 gap-2">
@@ -358,15 +386,28 @@ export function ObjectPanel({ o, onChange, onDelete, onDuplicate, site, units, c
       </div>
       <Field label={o.type === 'plant' ? 'Source (nursery, seed lot)' : 'Supplier or builder'}><input value={o.source || ''} onChange={(e) => onChange({ source: e.target.value })} className={inputCls} /></Field>
 
-      {['building', 'greenhouse', 'garden'].includes(o.type) && (
-        <div className="grid grid-cols-2 gap-2">
-          <Field label="Width (m)"><input type="number" step={0.1} min={0.5} value={o.width ?? 0} onChange={(e) => onChange({ width: Math.max(0.5, Number(e.target.value)) })} className={inputCls} /></Field>
-          <Field label="Length (m)"><input type="number" step={0.1} min={0.5} value={o.depth ?? 0} onChange={(e) => onChange({ depth: Math.max(0.5, Number(e.target.value)) })} className={inputCls} /></Field>
-          {o.type === 'building' && <Field label="Walls (m)"><input type="number" step={0.1} min={1} value={o.height ?? 3} onChange={(e) => onChange({ height: Math.max(1, Number(e.target.value)) })} className={inputCls} /></Field>}
-        </div>
-      )}
+      {['building', 'greenhouse', 'garden'].includes(o.type) && (() => {
+        const u = units === 'imperial' ? 'ft' : 'm';
+        const num = (label: string, v: number, min: number, set: (m: number) => void) => (
+          <Field label={`${label} (${u})`}><input type="number" step={units === 'imperial' ? 0.5 : 0.1} min={lenIn(min, units)} value={lenIn(v, units)} onChange={(e) => set(Math.max(min, lenOut(Number(e.target.value), units)))} className={inputCls} data-dim={label.toLowerCase()} /></Field>
+        );
+        return (
+          <div className="grid grid-cols-2 gap-2">
+            {num('Width', o.width ?? 0, 0.5, (m) => onChange({ width: m }))}
+            {num('Length', o.depth ?? 0, 0.5, (m) => onChange({ depth: m }))}
+            {o.type === 'building' && num('Walls', o.height ?? 3, 1, (m) => onChange({ height: m }))}
+          </div>
+        );
+      })()}
       {o.type === 'tank' && <Slider label="Capacity" value={o.capacityL ?? 10000} min={1000} max={100000} step={500} onChange={(v) => onChange({ capacityL: v })} display={fmtWater(o.capacityL ?? 10000, units)} />}
       {o.type === 'pond' && <div className="text-xs text-zinc-400">Radius {L(o.radius ?? 5)}, depth {L(o.depth ?? 1.5)}, holds about {fmtWater(Math.PI * (o.radius ?? 5) ** 2 * (o.depth ?? 1.5) * 500, units)}. Water surface {L(site.base + (o.waterLevel ?? 0))} above sea level.</div>}
+      {o.type === 'pond' && catchment && (catchment === 'working' ? <div className="text-xs text-zinc-500">Working out what drains to it...</div> : (
+        <div className="grid grid-cols-2 gap-2" data-catchment>
+          <Stat label="Drains to it" value={fmtArea(catchment.areaM2, units)} sub={`about ${fmtWater(catchment.runoffL, units)} of runoff a year`} />
+          <Stat label="Spillway" value={`at least ${fmtLen(catchment.spillwayM, units, 0)} wide`} sub={catchment.fillsTimes >= 1 ? `the catchment fills it ${catchment.fillsTimes.toFixed(1)} times a year` : 'the catchment alone will not fill it: feed it from a swale'} />
+          <p className="col-span-2 text-[11px] text-zinc-500">Rule of thumb from the land above it and your rainfall, with a level spillway on solid ground beside the dam. Have an engineer size any dam wall over 6 ft (1.8 m), and check your state's dam rules.</p>
+        </div>
+      ))}
       {o.type === 'irrigation' && <Toggle id="flow" label="Emitting water" checked={o.isFlowing !== false} onChange={(v) => onChange({ isFlowing: v })} />}
       {o.type !== 'pond' && <Slider label="Rotation" value={o.rotation || 0} min={0} max={359} onChange={(v) => onChange({ rotation: v })} display={`${o.rotation || 0}°`} />}
       {o.type !== 'pond' && <Slider label="Scale" value={o.scale} min={0.2} max={4} step={0.05} onChange={(v) => onChange({ scale: v })} display={`${o.scale.toFixed(2)}x`} />}
@@ -418,10 +459,12 @@ export function ObjectPanel({ o, onChange, onDelete, onDuplicate, site, units, c
 // ------------------------------------------------------------------ selected feature
 export function FeaturePanel({ f, onChange, onDelete, units, onGuide, hasClimate }: { f: Feature; onChange: (p: Partial<Feature>) => void; onDelete: () => void; units: Units; onGuide?: () => void; hasClimate?: boolean }) {
   const len = polylineLength(f.points);
-  const title = { path: 'Path', zone: 'Zone', swale: 'Swale', berm: 'Berm', fence: 'Fence', keyline: 'Keyline', sector: 'Sector', paddock: 'Paddock' }[f.kind];
+  const title = { path: 'Path', zone: 'Zone', swale: 'Swale', berm: 'Berm', fence: 'Fence', keyline: 'Keyline', sector: 'Sector', paddock: 'Paddock', boundary: 'Property line' }[f.kind];
   return (
     <SidebarPanel title={`Selected: ${title}`} icon={f.kind === 'zone' ? Hexagon : f.kind === 'path' ? Route : f.kind === 'fence' ? Fence : f.kind === 'sector' ? Compass : f.kind === 'paddock' ? PawPrint : f.kind === 'keyline' ? Rows3 : Waves}>
       <Field label="Name"><input value={f.name} onChange={(e) => onChange({ name: e.target.value })} className={inputCls} /></Field>
+      {!['sector', 'boundary', 'zone'].includes(f.kind) && <StatusPhase status={f.status} phase={f.phase} onChange={onChange} />}
+      {f.kind === 'boundary' && <Stat label="Inside the property line" value={fmtArea(polygonArea(f.points), units)} sub={`${fmtLen(polylineLength([...f.points, f.points[0]]), units, 0)} around`} />}
       {f.kind === 'zone' && (
         <>
           <Field label="Zone">
@@ -446,7 +489,7 @@ export function FeaturePanel({ f, onChange, onDelete, units, onGuide, hasClimate
           <p className="text-xs text-zinc-500">This is the record of the earthwork. Deleting it keeps the shaped ground; use Undo to take the digging back.</p>
         </>
       )}
-      {f.kind === 'fence' && <Stat label="Length" value={fmtLen(len, units)} sub={`about ${Math.ceil(len / 2.5) + 1} posts at 2.5 m`} />}
+      {f.kind === 'fence' && <Stat label="Length" value={fmtLen(len, units)} sub={`about ${Math.ceil(len / 2.5) + 1} posts at ${units === 'imperial' ? '8 ft' : '2.5 m'}`} />}
       {f.kind === 'keyline' && <Stat label="Length" value={fmtLen(len, units)} sub="Rip, plant or swale along it" />}
       {f.kind === 'sector' && (
         <>
@@ -476,7 +519,7 @@ export function FeaturePanel({ f, onChange, onDelete, units, onGuide, hasClimate
               <Stat label="Area" value={fmtArea(a, units)} sub={need ? `${Math.round((a / need) * 100)}% of what they need` : ''} />
               <Stat label="Rest between grazes" value={`${f.restDays ?? an.restDays} days`} sub={need > a ? `Split into ${Math.ceil(need / Math.max(1, a))}+ paddocks and rotate` : 'Room enough to rotate'} />
             </div>
-            <p className="text-xs text-zinc-500">{an.note}</p>
+            <p className="text-xs text-zinc-500">{localizeText(an.note, units)}</p>
           </>
         );
       })()}
@@ -487,7 +530,7 @@ export function FeaturePanel({ f, onChange, onDelete, units, onGuide, hasClimate
 }
 
 // ------------------------------------------------------------------ site facts
-export function SitePanel({ site, units, stats, onResurvey, sc, onEditClimate }: { site: Site; units: Units; stats: any; onResurvey?: () => void; sc?: SiteClimate | null; onEditClimate?: () => void }) {
+export function SitePanel({ site, units, stats, onResurvey, sc, onEditClimate, surroundings }: { site: Site; units: Units; stats: any; onResurvey?: () => void; sc?: SiteClimate | null; onEditClimate?: () => void; surroundings?: React.ReactNode }) {
   const c = site.climate, s = site.soil;
   const maxP = c ? Math.max(1, ...c.monthlyPrecipMm) : 1;
   return (
@@ -498,7 +541,7 @@ export function SitePanel({ site, units, stats, onResurvey, sc, onEditClimate }:
       <div className="grid grid-cols-2 gap-2">
         <Stat label="Area" value={fmtArea(site.size * site.size, units)} sub={`${fmtLen(site.size, units, 0)} square`} />
         <Stat label="Elevation" value={`${fmtLen(site.base + stats.min, units, 0)} to ${fmtLen(site.base + stats.max, units, 0)}`} sub={`${fmtLen(stats.relief, units)} of relief`} />
-        <Stat label="Mean slope" value={`${stats.meanSlope.toFixed(1)}%`} sub={`steepest ${stats.steepest.toFixed(0)}%`} />
+        <Stat label="Mean slope" value={`${stats.meanSlope.toFixed(1)}%`} sub={`steepest 1% of the land: ${stats.steepest.toFixed(0)}%`} />
         <Stat label="Terrain data" value={site.sourceResM ? `${site.sourceResM} m` : 'none'} sub={site.source} />
       </div>
       <div>
@@ -527,7 +570,8 @@ export function SitePanel({ site, units, stats, onResurvey, sc, onEditClimate }:
               <Stat label="Rainfall" value={`${fmtRain(c.annualPrecipMm, units)} / yr`} sub={sc.koppen?.name} />
               <Stat label="Last spring frost" value={sc.frostFree ? 'Frost free' : doyLabel(sc.lastMean!)} sub={sc.frostFree ? '' : `safe after ${doyLabel(sc.lastSafe!)}`} />
               <Stat label="First fall frost" value={sc.frostFree ? 'Frost free' : doyLabel(sc.firstMean!)} sub={sc.frostFree ? '' : `safe before ${doyLabel(sc.firstSafe!)}`} />
-              <Stat label="Winter chill" value={sc.chill != null ? `${sc.chill.toLocaleString()} h` : '?'} sub="0 to 7 C hours" />
+              {!sc.frostFree && <Stat label="Frost-free season" value={`${sc.frostFreeAvgDays} days`} sub={`average year; ${sc.frostFreeDays} days in 9 years of 10`} />}
+              <Stat label="Winter chill" value={sc.chill != null ? `${sc.chill.toLocaleString()} h` : '?'} sub={units === 'imperial' ? 'hours at 32 to 45°F' : 'hours at 0 to 7°C'} />
               <Stat label="Summer heat" value={`${fmtTemp(sc.hottestMaxC, units)} highs`} sub={sc.gdd != null ? `${sc.gdd.toLocaleString()} degree days` : ''} />
             </div>
           ) : (
@@ -548,7 +592,7 @@ export function SitePanel({ site, units, stats, onResurvey, sc, onEditClimate }:
       )}
       {s && (
         <div className="pt-2 border-t border-zinc-800 space-y-1 text-xs">
-          <div className="text-xs uppercase tracking-wider text-zinc-500">Soil</div>
+          <div className="text-xs uppercase tracking-wider text-zinc-500">Soil where the pin is</div>
           {s.available ? (
             <>
               <div className="text-zinc-200">{s.mapUnit}</div>
@@ -559,6 +603,7 @@ export function SitePanel({ site, units, stats, onResurvey, sc, onEditClimate }:
           ) : <div className="text-zinc-500">{s.note}</div>}
         </div>
       )}
+      {surroundings}
       {site.note && <div className="text-[11px] text-zinc-500">{site.note}</div>}
       {onResurvey && <Btn className="w-full" onClick={onResurvey}>Refresh climate and soil</Btn>}
     </SidebarPanel>
@@ -568,10 +613,10 @@ export function SitePanel({ site, units, stats, onResurvey, sc, onEditClimate }:
 // ------------------------------------------------------------------ analysis overlays
 const OVERLAYS: { id: Overlay; label: string }[] = [
   { id: 'none', label: 'None' }, { id: 'slope', label: 'Slope' }, { id: 'aspect', label: 'Aspect (facing)' },
-  { id: 'elevation', label: 'Elevation' }, { id: 'flow', label: 'Water flow' }, { id: 'sun', label: 'Sun hours' },
+  { id: 'elevation', label: 'Elevation' }, { id: 'flow', label: 'Water flow' }, { id: 'sun', label: 'Sun hours' }, { id: 'soil', label: 'Soil map' },
 ];
 
-export function AnalysisPanel({ s, set, busy, sunInfo, units, extra }: { s: Settings; set: (p: Partial<Settings>) => void; busy: string | null; sunInfo: string; units: Units; extra?: React.ReactNode }) {
+export function AnalysisPanel({ s, set, busy, sunInfo, units, extra, soils }: { s: Settings; set: (p: Partial<Settings>) => void; busy: string | null; sunInfo: string; units: Units; extra?: React.ReactNode; soils?: SoilUnit[] | null }) {
   return (
     <SidebarPanel title="Analysis" icon={Activity} right={busy ? <span className="text-[10px] text-emerald-400">{busy}</span> : null}>
       <div className="grid grid-cols-3 gap-1.5">
@@ -585,13 +630,24 @@ export function AnalysisPanel({ s, set, busy, sunInfo, units, extra }: { s: Sett
       ))}
       {s.overlay === 'aspect' && <p className="text-xs text-zinc-500">Blue faces north, green east, orange south, yellow west, grey is flat.</p>}
       {s.overlay === 'flow' && <p className="text-xs text-zinc-500">Dark blue lines are where runoff from the most land gathers: the natural drainage. Good places for swales above them and ponds where they slow down.</p>}
+      {s.overlay === 'soil' && (soils && soils.length ? (
+        <div className="space-y-1.5" data-soil-legend>
+          {soils.map((u, i) => (
+            <div key={u.mukey} className="flex items-start gap-2 text-xs">
+              <span className="w-2.5 h-2.5 rounded-sm mt-0.5 shrink-0" style={{ background: soilColor(u.drainage, i) }} />
+              <span className="flex-1"><span className="text-zinc-200">{u.name}</span><span className="block text-zinc-500">{Math.round(u.share * 100)}% of the site · {u.drainage || 'drainage unknown'}{u.flooding && u.flooding !== 'None' ? ` · floods: ${u.flooding.toLowerCase()}` : ''}{u.pH != null ? ` · pH ${u.pH}` : ''}</span></span>
+            </div>
+          ))}
+          <p className="text-[11px] text-zinc-500">USDA soil survey map units. Blue soils stay wet; warm colours drain fast.</p>
+        </div>
+      ) : <p className="text-xs text-zinc-500">The soil map loads with the flood maps and streams. Open the Site tab and load the existing conditions.</p>)}
       {s.overlay === 'sun' && <p className="text-xs text-zinc-500">{sunInfo || 'Direct sun through the day shown on the timeline, counting shade from hills, trees and buildings.'} Yellow gets the most sun, dark purple the least.</p>}
       <div className="pt-2 border-t border-zinc-800 space-y-3">
         <Toggle id="contours" label="Contour lines" checked={s.contours} onChange={(v) => set({ contours: v })} />
         {s.contours && (
           <Field label="Contour interval">
-            <select value={s.contourInterval} onChange={(e) => set({ contourInterval: Number(e.target.value) })} className={inputCls}>
-              {[0.25, 0.5, 1, 2, 5, 10, 20].map((v) => <option key={v} value={v}>{fmtLen(v, units, v < 1 ? 2 : 0)}</option>)}
+            <select value={contourChoices(units).reduce((b, c) => (Math.abs(c.m - s.contourInterval) < Math.abs(b.m - s.contourInterval) ? c : b)).m} onChange={(e) => set({ contourInterval: Number(e.target.value) })} className={inputCls}>
+              {contourChoices(units).map((c) => <option key={c.label} value={c.m}>{c.label}</option>)}
             </select>
           </Field>
         )}
@@ -605,6 +661,7 @@ export function AnalysisPanel({ s, set, busy, sunInfo, units, extra }: { s: Sett
 const LAYER_LABELS: Record<LayerId, string> = {
   plants: 'Trees and plants', structures: 'Buildings and structures', gardens: 'Garden beds', water: 'Ponds, tanks, irrigation',
   paths: 'Paths and fences', zones: 'Zones and paddocks', earthworks: 'Earthworks and keylines', sectors: 'Sectors',
+  existing: 'Roads, buildings and streams on the map', hazards: 'Flood areas and wetlands',
 };
 
 export function LayersPanel({ s, set, counts, hasSatellite, onClearAll }: { s: Settings; set: (p: Partial<Settings>) => void; counts: Record<LayerId, number>; hasSatellite: boolean; onClearAll: () => void }) {
@@ -619,6 +676,11 @@ export function LayersPanel({ s, set, counts, hasSatellite, onClearAll }: { s: S
           </div>
         ))}
       </div>
+      <div className="pt-2 border-t border-zinc-800 space-y-2" data-phase-filter>
+        <div className="text-[13px] text-zinc-200">Show the design as built by</div>
+        <Segmented value={s.phaseShown ?? 3} onChange={(v) => set({ phaseShown: v })} options={[{ id: 1, label: 'Year 1' }, { id: 2, label: 'Year 2' }, { id: 3, label: 'Year 3' }]} />
+        <p className="text-[11px] text-zinc-500">Walk the client through the build one year at a time. Existing things always show.</p>
+      </div>
       <div className="pt-2 border-t border-zinc-800 space-y-3">
         <Toggle id="sat" label={hasSatellite ? 'Satellite photo' : 'Satellite photo (none for this site)'} checked={s.satellite && hasSatellite} onChange={(v) => set({ satellite: v })} />
         {s.satellite && hasSatellite && <Slider label="Photo opacity" value={s.imageOpacity} min={0} max={1} step={0.05} onChange={(v) => set({ imageOpacity: v })} display={`${Math.round(s.imageOpacity * 100)}%`} />}
@@ -632,21 +694,45 @@ export function LayersPanel({ s, set, counts, hasSatellite, onClearAll }: { s: S
 }
 
 // ------------------------------------------------------------------ tasks and journal
-export function TasksPanel({ objects, ctx, viewDay, onToggle, onSelect, sc }: { objects: SiteObject[]; ctx: ModelContext; viewDay: string; onToggle: (t: Task) => void; onSelect: (id: string) => void; sc?: SiteClimate | null }) {
+export function TasksPanel({ objects, ctx, viewDay, onToggle, onSelect, sc, watch }: { objects: SiteObject[]; ctx: ModelContext; viewDay: string; onToggle: (t: Task) => void; onSelect: (id: string) => void; sc?: SiteClimate | null; watch?: WatchItem[] | 'loading' | null }) {
   const tasks = useMemo(() => monthTasks(objects, ctx, sc), [objects, ctx, sc]);
+  // the journal groups the same thing done to many plants on one day: "28 Eastern red cedar: planted"
+  const recent = useMemo(() => {
+    const all = objects.flatMap((o) => o.events.map((e) => ({ ...e, obj: o }))).sort((a, b) => b.date.localeCompare(a.date));
+    const out: { key: string; date: string; label: string; id: string; n: number; one: string; kind: string; what: string }[] = [];
+    for (const e of all) {
+      const kind = e.obj.type === 'plant' ? SPECIES_BY_ID[e.obj.species || '']?.name || e.obj.name : e.obj.name;
+      const key = `${e.date}|${e.type}|${e.obj.type === 'plant' ? kind : e.obj.id}|${e.qtyKg ?? ''}`;
+      const hit = out.find((x) => x.key === key);
+      if (hit) { hit.n++; continue; }
+      if (out.length >= 14) continue;
+      out.push({ key, date: e.date, label: '', id: e.obj.id, n: 1, one: e.obj.name, kind, what: `${e.type}${e.qtyKg ? ` ${e.qtyKg} kg` : ''}` });
+    }
+    return out.map((x) => ({ ...x, label: x.n > 1 ? `${x.n} ${x.kind}: ${x.what}` : `${x.one}: ${x.what}` }));
+  }, [objects]);
   const month = ctx.viewDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  const recent = useMemo(() => objects.flatMap((o) => o.events.map((e) => ({ ...e, obj: o }))).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 12), [objects]);
   const done = tasks.filter((t) => t.done).length;
   return (
     <SidebarPanel title="Tasks and journal" icon={ListChecks} right={tasks.length ? <span className="text-[10px] text-zinc-400">{done}/{tasks.length}</span> : null}>
-      <div className="text-xs text-zinc-500">Jobs for {month}, worked out from each plant's own calendar and your site's climate. Move the timeline to plan another month.</div>
+      {watch && (
+        <div className="space-y-1.5" data-season-watch>
+          <div className="text-[11px] uppercase tracking-[0.1em] text-zinc-400 font-semibold flex items-center gap-1.5"><CloudLightning size={12} className="text-sky-300" /> Season watch, next 10 days</div>
+          {watch === 'loading' ? <div className="text-xs text-zinc-500">Reading the forecast...</div> : watch.length === 0 ? <div className="text-xs text-zinc-500">No frost, storm, gale or heat in the forecast. A good week for the jobs below.</div> : watch.map((w, i) => (
+            <button key={i} onClick={() => w.ids[0] && onSelect(w.ids[0])} className={`w-full text-left rounded-xl border p-2.5 ${w.level === 'warn' ? 'border-amber-400/30 bg-amber-400/[0.07]' : 'border-white/[0.07] bg-zinc-950/40'}`}>
+              <div className="text-[13px] text-zinc-100 font-medium flex items-center gap-1.5">{/rost/.test(w.title) ? <Snowflake size={13} className="text-sky-300" /> : <CloudLightning size={13} className="text-amber-300" />}{w.title}</div>
+              <div className="text-[11px] text-zinc-400 mt-0.5">{w.text}</div>
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="text-xs text-zinc-500">Jobs for {month}, worked out from each plant's own calendar and your site's climate. The same job on many plants is one line. Move the timeline to plan another month.</div>
       {tasks.length === 0 ? <div className="text-xs text-zinc-600">{objects.length ? 'Nothing due this month.' : 'Place plants and structures and their jobs show up here.'}</div> : (
         <div className="space-y-1 max-h-64 overflow-y-auto scroll-thin">
           {tasks.map((t) => (
             <div key={t.id} className="flex items-start gap-2">
               <input type="checkbox" checked={t.done} onChange={() => onToggle(t)} className="mt-0.5 w-4 h-4 accent-emerald-500" />
               <button onClick={() => onSelect(t.objectId)} className="text-left flex-1">
-                <div className={`text-sm ${t.done ? 'text-zinc-500 line-through' : 'text-zinc-200'}`}>{t.label}</div>
+                <div className={`text-sm ${t.done ? 'text-zinc-500 line-through' : 'text-zinc-200'}`} data-task>{t.label}</div>
                 <div className="text-[11px] text-zinc-600">{t.why}</div>
               </button>
             </div>
@@ -656,8 +742,8 @@ export function TasksPanel({ objects, ctx, viewDay, onToggle, onSelect, sc }: { 
       <div className="pt-2 border-t border-zinc-800">
         <div className="text-xs uppercase tracking-wider text-zinc-500 mb-1">Recent journal</div>
         {recent.length === 0 ? <div className="text-xs text-zinc-600">Ticking a task or logging on a plant writes here, dated {viewDay}.</div> : recent.map((e) => (
-          <button key={e.id + e.obj.id} onClick={() => onSelect(e.obj.id)} className="w-full text-left text-xs flex gap-2 py-0.5 hover:text-zinc-200">
-            <span className="font-mono text-zinc-600">{e.date}</span><span className="text-zinc-400 truncate">{e.obj.name}: {e.type}{e.qtyKg ? ` ${e.qtyKg} kg` : ''}</span>
+          <button key={e.key} onClick={() => onSelect(e.id)} className="w-full text-left text-xs flex gap-2 py-0.5 hover:text-zinc-200" data-journal>
+            <span className="font-mono text-zinc-600">{e.date}</span><span className="text-zinc-400 truncate">{e.label}</span>
           </button>
         ))}
       </div>
@@ -699,3 +785,46 @@ export function SummaryPanel({ site, objects, features, stats, units, onReport }
 export const SunBadge = ({ alt, az }: { alt: number; az: number }) => (
   <span className="flex items-center gap-1"><Sun size={12} className={alt > 0 ? 'text-amber-400' : 'text-zinc-600'} />{alt > 0 ? `${alt.toFixed(0)}° up, ${COMPASS[Math.round(az / 45) % 8]}` : 'below the horizon'}</span>
 );
+
+// ------------------------------------------------------------------ existing conditions from the public maps
+export function ExistingConditions({ site, units, reading, onLoad, onImportBuildings, onBoundary, hasBoundary, onSoilMap }: {
+  site: Site; units: Units; reading: boolean; onLoad: () => void; onImportBuildings: () => void; onBoundary: () => void; hasBoundary: boolean; onSoilMap: () => void;
+}) {
+  const r = site.surroundings;
+  const errs = r ? Object.keys(r.errors || {}) : [];
+  const sfha = (r?.flood || []).filter((z) => z.sfha);
+  const floodArea = sfha.reduce((t, z) => t + polygonArea(z.ring), 0);
+  const streams = r?.streams?.length ? r.streams : (r?.osm?.water || []).filter((w) => w.line);
+  const NAMES: Record<string, string> = { flood: 'flood maps', wetlands: 'wetlands', streams: 'streams', soils: 'soil map', osm: 'roads and buildings' };
+  return (
+    <div className="pt-2 border-t border-zinc-800 space-y-2" data-existing>
+      <div className="text-xs uppercase tracking-wider text-zinc-500 flex items-center gap-1"><MapIcon2 size={12} /> Existing conditions</div>
+      {!r ? (
+        <div className="space-y-2">
+          <p className="text-xs text-zinc-400">{reading ? 'Reading FEMA flood maps, streams, wetlands, the soil survey and OpenStreetMap...' : 'Flood zones, streams, wetlands, the soil map and the roads and buildings already on the land.'}</p>
+          {!reading && <Btn className="w-full" onClick={onLoad}>Load them</Btn>}
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <Stat label="Flood area" value={sfha.length ? fmtArea(floodArea, units) : r.flood ? 'None mapped' : 'Not loaded'} sub={sfha.length ? [...new Set(sfha.map((z) => z.label.split(':')[0]))].join(', ') : 'FEMA'} />
+            <Stat label="Wetlands" value={(r.wetlands || []).length ? `${r.wetlands!.length} mapped` : r.wetlands ? 'None' : 'Not loaded'} sub={(r.wetlands || [])[0]?.type || 'USFWS inventory'} />
+            <Stat label="Streams" value={streams.length ? `${fmtLen(streams.reduce((t: number, x: any) => t + polylineLength(x.line), 0), units, 0)}` : 'None mapped'} sub={streams[0] ? ((streams[0] as any).name || (streams[0] as any).kind) : 'USGS hydrography'} />
+            <Stat label="On the map" value={`${r.osm?.buildings.length ?? 0} buildings`} sub={`${r.osm?.roads.length ?? 0} road and drive segments`} />
+          </div>
+          {(r.soils || []).length > 0 && (
+            <button onClick={onSoilMap} className="w-full text-left rounded-lg bg-zinc-900/60 border border-zinc-800 p-2 hover:border-zinc-600" data-soil-units>
+              <div className="text-xs text-zinc-200">{r.soils!.length} soil map units on the site</div>
+              <div className="text-[11px] text-zinc-500 truncate">{r.soils!.slice(0, 3).map((u) => `${Math.round(u.share * 100)}% ${u.name.split(',')[0]}`).join(' · ')}</div>
+              <div className="text-[11px] text-emerald-400 mt-0.5">Show the soil map</div>
+            </button>
+          )}
+          {(r.osm?.buildings.length ?? 0) > 0 && <Btn className="w-full" onClick={onImportBuildings} data-import-buildings><Home size={13} /> Add the mapped buildings as existing</Btn>}
+          {!hasBoundary && <Btn className="w-full" onClick={onBoundary}>Draw or import the property line</Btn>}
+          {errs.length > 0 && <div className="text-[11px] text-amber-300">Could not reach the {errs.map((e) => NAMES[e] || e).join(', ')} this time. <button className="underline" onClick={onLoad} disabled={reading}>{reading ? 'Trying...' : 'Try again'}</button></div>}
+          <div className="text-[10px] text-zinc-600">FEMA, USFWS, USGS, USDA NRCS and OpenStreetMap. Read {new Date(r.fetched).toLocaleDateString()}. Public maps miss things: walk the land and call 811 before digging.</div>
+        </>
+      )}
+    </div>
+  );
+}
