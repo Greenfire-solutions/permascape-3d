@@ -46,8 +46,17 @@ from the Canopy OS spec.
 
 ## Start it
 
-Double-click **Start Permascape** in this folder. It builds the app if the source is newer,
-starts the server on http://127.0.0.1:8140 and opens it. Logs: `~/Library/Logs/Permascape3D/`.
+Read `READ ME FIRST.txt`. In short: right-click **Start Permascape** > Open the first time
+(macOS asks once), then double-click it. On a Mac with no Node.js it downloads the pinned
+Node v22.23.4 into `runtime/` (checked against the nodejs.org checksum, nothing system-wide),
+installs the one server package (`pngjs`), starts the server on http://127.0.0.1:8140 and
+opens it. The app ships ready built in `dist/`, so a download never builds. Logs:
+`~/Library/Logs/Permascape3D/`.
+
+`dist/BUILD-SOURCE.txt` is a fingerprint of the source the build came from
+(`scripts/source-hash.mjs`). If the source changes, the launcher rebuilds (getting the build
+tools first if needed, which takes minutes on an older Mac), and `npm test` fails until
+`npm run build` is run, so a commit can never ship a stale build.
 
 By hand: `npm install && npm run build && npm start`. For development, `npm start` in one
 terminal and `npm run dev` (Vite on 8141, proxies `/api` to 8140) in another.

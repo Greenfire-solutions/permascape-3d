@@ -16,12 +16,14 @@ set -u
 
 VIA_TERMINAL=0
 [ "${1:-}" = "--via-terminal" ] && VIA_TERMINAL=1
+# PERMASCAPE_LAUNCH_QUIET=1: no browser, dialog, notification or window closing (tests, rehearsals).
+QUIET="${PERMASCAPE_LAUNCH_QUIET:-0}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOGDIR="$HOME/Library/Logs/Permascape3D"
 LOG="$LOGDIR/launcher.log"
 SRVLOG="$LOGDIR/server.log"
-PORT=8140
+PORT="${PERMASCAPE_PORT:-8140}"
 URL="http://127.0.0.1:$PORT"
 APP_ID="permascape-3d"
 
@@ -32,6 +34,7 @@ say() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG" 2>/dev/null; }
 # way out. The closer is detached (setsid) so Terminal closes without asking.
 MYTTY="$(tty 2>/dev/null || true)"
 close_window() {
+  [ "$QUIET" = 1 ] && return 0
   [ "$VIA_TERMINAL" = 1 ] || return 0
   case "$MYTTY" in /dev/tty*) ;; *) return 0 ;; esac
   /usr/bin/perl -MPOSIX -e 'fork and exit; POSIX::setsid(); exec @ARGV' /bin/bash -c "
@@ -54,23 +57,27 @@ OSA
 die() {
   say "FAILED: $1"
   close_window
+  [ "$QUIET" = 1 ] && { printf '%b\n' "$1" >&2; exit 1; }
   /usr/bin/osascript -e 'activate' -e "display dialog \"$1\" with title \"Permascape 3D\" buttons {\"OK\"} default button 1 with icon caution" >/dev/null 2>&1
   exit 1
 }
-note() { /usr/bin/osascript -e "display notification \"$1\" with title \"Permascape 3D\"" >/dev/null 2>&1; }
+note() { say "note: $1"; [ "$QUIET" = 1 ] && return 0; /usr/bin/osascript -e "display notification \"$1\" with title \"Permascape 3D\"" >/dev/null 2>&1; }
 
 say "--- launch --- (via_terminal=$VIA_TERMINAL) root: $ROOT"
 [ -f "$ROOT/server/server.mjs" ] || die "Can't find Permascape 3D.\n\nExpected: $ROOT/server/server.mjs"
 
-# Finder gives a bare PATH, so hunt for a node that is new enough (20+).
-find_node() {
-  NODE=""
-  for c in /usr/local/bin/node /opt/homebrew/bin/node "$HOME/.nvm/versions/node"/*/bin/node "$HOME/.volta/bin/node" /usr/bin/node; do
-    [ -x "$c" ] && "$c" -e "process.exit(+process.versions.node.split('.')[0] >= 20 ? 0 : 1)" 2>/dev/null && NODE="$c" && return 0
-  done
-  return 1
-}
-find_node || die "Permascape 3D needs Node.js 20 or newer.\n\nInstall it from nodejs.org, then click the icon again."
+# Finder gives a bare PATH, so scripts/setup.sh hunts for a Node.js that is new
+# enough (20+). A new Mac has none: setup then fetches the pinned version into
+# ./runtime, checked against the checksum nodejs.org publishes. Nothing is
+# installed system-wide.
+SETUP="$ROOT/scripts/setup.sh"
+[ -f "$SETUP" ] || die "Can't find scripts/setup.sh.\n\nKeep the whole Permascape 3D folder together."
+if ! NODE="$(/bin/bash "$SETUP" --check 2>>"$LOG")"; then
+  note "First start: downloading Node.js (about 50 MB, one to three minutes)."
+  NODE="$(/bin/bash "$SETUP" 2>>"$LOG")" || die "Permascape 3D needs Node.js and could not download it.\n\nConnect to the internet and open Start Permascape again.\n\nDetails: ~/Library/Logs/Permascape3D/launcher.log"
+fi
+[ -x "$NODE" ] || die "Permascape 3D needs Node.js 20 or newer.\n\nInstall it from nodejs.org, then open Start Permascape again."
+NPM="$(dirname "$NODE")/npm"
 export PATH="$(dirname "$NODE"):$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 say "node: $NODE ($("$NODE" -v 2>/dev/null))"
 
@@ -94,22 +101,40 @@ stale_server() {
   [ "$newest" -gt "$started" ]
 }
 
+open_page() {
+  [ "$QUIET" = 1 ] && { say "quiet: not opening $URL"; return 0; }
+  { "$HOME/.local/bin/open-page" "$URL" 2>/dev/null || /usr/bin/open "$URL"; }
+}
+
 cd "$ROOT" || die "Can't enter $ROOT"
 /bin/cat "$ROOT/package.json" >/dev/null 2>&1 || die "macOS privacy is blocking this launcher from reading the project folder.\n\nFix, once: System Preferences > Security & Privacy > Privacy > Full Disk Access > add Terminal."
 
-# The app is served from dist/. Rebuild it when any source file is newer than the build.
-newest_src=$(/usr/bin/find "$ROOT/src" "$ROOT/index.html" -type f -exec /usr/bin/stat -f %m {} + 2>/dev/null | sort -rn | head -1)
-built=$(/usr/bin/stat -f %m "$ROOT/dist/index.html" 2>/dev/null || echo 0)
-if [ ! -d "$ROOT/node_modules" ]; then
-  say "installing packages"
-  note "First start: installing packages, about a minute"
-  "$(dirname "$NODE")/npm" install --no-audit --no-fund >> "$SRVLOG" 2>&1 || die "Installing packages failed.\n\nDetails: ~/Library/Logs/Permascape3D/server.log"
+# A downloaded copy marks every file "from the internet"; once the person has
+# opened the launcher, that mark only makes macOS refuse the Node it fetched.
+/usr/bin/xattr -rd com.apple.quarantine "$ROOT" 2>/dev/null || true
+
+# The server needs one small package (pngjs, for the terrain tiles). The app
+# itself ships ready built in dist/, so a new copy never needs a build.
+if [ ! -f "$ROOT/node_modules/pngjs/package.json" ]; then
+  say "installing the server package"
+  note "First start: setting up, usually under a minute."
+  "$NPM" install --omit=dev --no-audit --no-fund >> "$SRVLOG" 2>&1 || die "Setting up failed. Check the internet connection and open Start Permascape again.\n\nDetails: ~/Library/Logs/Permascape3D/server.log"
 fi
-if [ "${newest_src:-0}" -gt "$built" ]; then
+
+# Rebuild only when the source no longer matches the build in dist/ (someone
+# changed the code). That needs the full toolkit, which is big and slow on an
+# older Mac, so say so honestly.
+if ! "$NODE" "$ROOT/scripts/source-hash.mjs" --check 2>>"$LOG"; then
+  if [ ! -x "$ROOT/node_modules/.bin/vite" ]; then
+    say "installing the build tools"
+    note "The app's code was changed, so it must be rebuilt. Getting the build tools first: 3 to 10 minutes."
+    "$NPM" install --no-audit --no-fund >> "$SRVLOG" 2>&1 || die "Getting the build tools failed.\n\nDetails: ~/Library/Logs/Permascape3D/server.log"
+  fi
   say "building the app"
-  note "Building Permascape 3D, about 20 seconds"
-  "$(dirname "$NODE")/npm" run build >> "$SRVLOG" 2>&1 || die "Building the app failed.\n\nDetails: ~/Library/Logs/Permascape3D/server.log"
+  note "Rebuilding Permascape 3D: 1 to 5 minutes. The page opens by itself when it is ready."
+  "$NPM" run build >> "$SRVLOG" 2>&1 || die "Building the app failed.\n\nDetails: ~/Library/Logs/Permascape3D/server.log"
 fi
+[ -f "$ROOT/dist/index.html" ] || die "The app is missing its dist folder.\n\nDownload Permascape 3D again and keep the whole folder together."
 
 if is_ours; then
   if stale_server; then
@@ -118,7 +143,7 @@ if is_ours; then
     for _ in 1 2 3 4 5 6 7 8; do port_busy || break; sleep 0.5; done
   else
     say "already running, opening"
-    { "$HOME/.local/bin/open-page" "$URL" || /usr/bin/open "$URL"; }
+    open_page
     close_window
     exit 0
   fi
@@ -141,7 +166,7 @@ done
 
 if is_ours; then
   say "up, opening $URL"
-  { "$HOME/.local/bin/open-page" "$URL" || /usr/bin/open "$URL"; }
+  open_page
   close_window
   exit 0
 fi

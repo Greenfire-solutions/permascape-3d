@@ -1,0 +1,70 @@
+PERMASCAPE 3D: READ ME FIRST
+============================
+
+Permascape 3D is a permaculture design studio. Type an address, the land loads in 3D with its
+real slope, satellite photo, climate and public maps, and you design on it. It runs on your own
+Mac, in your web browser. You do not need to install anything yourself.
+
+
+STARTING IT THE FIRST TIME
+--------------------------
+
+1. Unzip the download and move the "Permascape 3D" folder into your home folder
+   (in Finder: Go > Home, the folder with your name). Keep everything in it together.
+   It also works from Desktop, Documents or Downloads, but then macOS may ask once
+   whether Terminal may open files there: press OK.
+
+2. Open the folder and RIGHT-CLICK (or Control-click) "Start Permascape", choose Open,
+   then press Open again in the box that appears.
+
+   macOS asks this once because the app was not bought through the App Store.
+
+   On macOS 15 (Sequoia) or newer there may be no Open button. Then:
+     a. Double-click "Start Permascape" and press Done (or OK) on the warning.
+     b. Open System Settings > Privacy & Security, scroll down, and press "Open Anyway"
+        next to the line about Start Permascape.
+     c. Double-click "Start Permascape" again and press Open Anyway.
+
+3. Wait. The first start does two things by itself, and a small notice in the top right corner
+   of the screen tells you what it is doing:
+     - downloads Node.js, the engine the app runs on (about 50 MB, one to three minutes);
+     - sets up one small part it needs (usually under a minute).
+   Nothing is installed outside the Permascape 3D folder and no password is asked for.
+   You need an internet connection for this first start.
+
+4. Your web browser opens Permascape 3D. The first screen says "Opening Permascape 3D" while
+   the 3D map loads; on an older or busy Mac that can take up to half a minute.
+
+After the first time, just double-click "Start Permascape". It opens in a few seconds.
+
+If "Start Permascape" does nothing at all, double-click "Start Permascape.command" in the same
+folder instead. It does the same thing in a Terminal window.
+
+
+USING IT
+--------
+
+- Start a project from an address, coordinates or a Google Maps link.
+- In the Site tab, press "Load them" under Existing conditions to read the flood, stream, wetland,
+  soil and road maps for the land. The design review checks your design against these maps.
+- If one of those maps does not load (the government map services are sometimes down), the
+  review says "Not checked" for it and leaves it out of the score. Press "Try again" in Site
+  before you give a report to a client.
+- Public maps miss things. Walk the land, and call 811 before anyone digs.
+- Permie, the AI designer, needs Claude Code installed and signed in on this Mac. Everything
+  else works without it.
+
+Your projects are saved in the "data" folder inside Permascape 3D. Back that folder up.
+
+
+IF SOMETHING GOES WRONG
+-----------------------
+
+- A box says it could not download Node.js: check the internet connection and open
+  Start Permascape again.
+- A box says the port is in use: another copy of Permascape 3D, or another program, is already
+  running. Quit it, then open Start Permascape again.
+- The details of every start are written to the Logs folder in your Library:
+  Finder > Go > Go to Folder... and type  ~/Library/Logs/Permascape3D
+
+More: https://greenfire.earth

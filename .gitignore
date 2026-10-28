@@ -1,6 +1,7 @@
 node_modules
-dist
+runtime
 data/cache
 data/projects
 *.log
 data/profile.json
+.DS_Store
