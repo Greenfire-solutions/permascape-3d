@@ -1,3 +1,4 @@
 #!/bin/bash
-# Same as double-clicking "Start Permascape". All logic lives in scripts/start-permascape.sh.
-exec /bin/bash "$(dirname "$0")/scripts/start-permascape.sh"
+# Backup launcher: double-click this if the Start Permascape icon is ever
+# blocked by macOS. It runs exactly the same steps (scripts/start-permascape.sh).
+exec /bin/bash "$(cd "$(dirname "$0")" && pwd -P)/scripts/start-permascape.sh" --via-terminal

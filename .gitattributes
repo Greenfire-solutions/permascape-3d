@@ -1,0 +1,3 @@
+# Kept in the repo, left out of every download (git archive): the first
+# single-file prototype the app grew from.
+docs-original-permascape_3d.tsx export-ignore

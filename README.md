@@ -47,11 +47,19 @@ from the Canopy OS spec.
 ## Start it
 
 Read `READ ME FIRST.txt`. In short: right-click **Start Permascape** > Open the first time
-(macOS asks once), then double-click it. On a Mac with no Node.js it downloads the pinned
-Node v22.23.4 into `runtime/` (checked against the nodejs.org checksum, nothing system-wide),
-installs the one server package (`pngjs`), starts the server on http://127.0.0.1:8140 and
-opens it. The app ships ready built in `dist/`, so a download never builds. Logs:
-`~/Library/Logs/Permascape3D/`.
+(macOS asks once), then double-click it. The download (made by `scripts/package.sh`, one zip
+per Mac) carries Node v22.23.4 (with npm) in `runtime/`, the one server package (`pngjs`) in
+`node_modules/` and the built app in `dist/`, so nothing is fetched, installed or built on the
+buyer's Mac. A plain source checkout still works: `scripts/setup.sh` fetches the pinned Node
+(checked against the nodejs.org checksum, nothing system-wide) and the launcher installs
+`pngjs`. It starts the server on http://127.0.0.1:8140 and opens it. Projects are saved in
+`~/Permascape 3D Data` (a folder that already has `data/projects` keeps using it; or set
+`PERMASCAPE_DATA`). Logs: `~/Library/Logs/Permascape3D/`. `CLAUDE.md` is the guide for
+making it your own.
+
+`scripts/package.sh` works from a bare `git archive` (no node_modules, no dist): it builds the
+app from the lockfile in a scratch folder and writes `dist/Permascape 3D (Intel Mac).zip` and
+`(Apple Silicon).zip`.
 
 `dist/BUILD-SOURCE.txt` is a fingerprint of the source the build came from
 (`scripts/source-hash.mjs`). If the source changes, the launcher rebuilds (getting the build

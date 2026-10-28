@@ -17,15 +17,25 @@ set -u
 VIA_TERMINAL=0
 [ "${1:-}" = "--via-terminal" ] && VIA_TERMINAL=1
 # PERMASCAPE_LAUNCH_QUIET=1: no browser, dialog, notification or window closing (tests, rehearsals).
+# PERMASCAPE_PORT=<n>: another port (default 8140).
 QUIET="${PERMASCAPE_LAUNCH_QUIET:-0}"
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The physical path (pwd -P): the server reports its folder with symlinks
+# resolved, and the launcher must see the same string to know it is ours.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 LOGDIR="$HOME/Library/Logs/Permascape3D"
 LOG="$LOGDIR/launcher.log"
 SRVLOG="$LOGDIR/server.log"
 PORT="${PERMASCAPE_PORT:-8140}"
 URL="http://127.0.0.1:$PORT"
 APP_ID="permascape-3d"
+# Projects live outside the app folder, so a new version can replace the folder
+# without losing them. A folder that already keeps its own data/projects (an
+# older copy, or a developer's) goes on using that.
+if [ -n "${PERMASCAPE_DATA:-}" ]; then DATA="$PERMASCAPE_DATA"
+elif [ -d "$ROOT/data/projects" ]; then DATA="$ROOT/data"
+else DATA="$HOME/Permascape 3D Data"; fi
+export PERMASCAPE_DATA="$DATA"
 
 mkdir -p "$LOGDIR" 2>/dev/null
 say() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG" 2>/dev/null; }
@@ -85,6 +95,7 @@ say "node: $NODE ($("$NODE" -v 2>/dev/null))"
 whoami_json() { /usr/bin/curl -s --max-time 3 "$URL/api/whoami" 2>/dev/null; }
 is_ours() { whoami_json | /usr/bin/grep -q "\"app\":\"$APP_ID\"" && whoami_json | /usr/bin/grep -qF "\"project\":\"$ROOT\""; }
 is_same_app() { whoami_json | /usr/bin/grep -q "\"app\":\"$APP_ID\""; }
+same_data() { whoami_json | /usr/bin/grep -qF "\"data\":\"$DATA\""; }
 port_busy() { /usr/sbin/lsof -ti tcp:$PORT -sTCP:LISTEN >/dev/null 2>&1; }
 our_pid() { whoami_json | /usr/bin/sed -n 's/.*"pid":\([0-9]*\).*/\1/p'; }
 
@@ -147,13 +158,19 @@ if is_ours; then
     close_window
     exit 0
   fi
+elif is_same_app && same_data; then
+  # An older copy from another folder serving the same projects (an earlier
+  # download): stop it, so one server owns the projects.
+  say "stopping a Permascape 3D from another folder that serves the same projects"
+  kill "$(our_pid)" 2>/dev/null
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do port_busy || break; sleep 0.5; done
 elif is_same_app; then
   die "Another copy of Permascape 3D is already running on port $PORT, from a different folder.\n\nQuit that one first, then click the icon again."
 elif port_busy; then
   die "Port $PORT is being used by a different program, so Permascape 3D was not started.\n\nQuit that program, then click the icon again."
 fi
 
-say "starting server"
+say "starting server (data: $DATA)"
 nohup "$NODE" --no-warnings "$ROOT/server/server.mjs" >> "$SRVLOG" 2>&1 &
 SPID=$!
 disown $SPID 2>/dev/null

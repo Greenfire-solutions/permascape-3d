@@ -50,3 +50,20 @@ test('READ ME FIRST is the true double-click path, with the Gatekeeper step, in 
   assert.ok(!/[—–]/.test(read('index.html')));
   assert.match(read('index.html'), /Opening Permascape 3D/, 'the first screen says it is loading');
 });
+
+test('the download carries everything, keeps projects outside the app folder, and says how to make it your own', () => {
+  const pkg = read('scripts/package.sh');
+  execFileSync('/bin/bash', ['-n', path.join(ROOT, 'scripts/package.sh')]);
+  assert.match(pkg, /ci --omit=dev/, 'the server package is bundled');
+  assert.match(pkg, /runtime\/node/, 'Node is bundled');
+  assert.match(pkg, /\(\$LABEL\)\.zip/, 'one zip per Mac, named the way the store looks for');
+  const launch = read('scripts/start-permascape.sh');
+  assert.match(launch, /pwd -P/, 'the launcher compares the real folder path with the server');
+  assert.match(launch, /Permascape 3D Data/, 'projects default to a folder outside the app');
+  const stub = read('Start Permascape.app/Contents/MacOS/start-permascape');
+  assert.match(stub, /AppTranslocation/, 'the icon finds its real folder when macOS runs it from a temporary copy');
+  const guide = read('CLAUDE.md');
+  for (const want of ['npm run dev', 'npm test', 'Ideas to ask']) assert.ok(guide.includes(want), `CLAUDE.md mentions ${want}`);
+  assert.ok(!/[—–]/.test(guide) && !/[—–]/.test(read('READ ME FIRST.txt')));
+  assert.match(read('READ ME FIRST.txt'), /Permascape 3D Data/, 'READ ME says where projects are saved');
+});

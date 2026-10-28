@@ -5,3 +5,6 @@ data/projects
 *.log
 data/profile.json
 .DS_Store
+dist/*.zip
+dist/SHA256SUMS
+tools/private-words.txt
