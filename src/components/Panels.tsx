@@ -16,6 +16,7 @@ import type { Tool, WaterSettings } from './Viewport3D';
 import { SidebarPanel, Slider, Field, inputCls, Toggle, Btn, Stat, ConfirmBtn, Segmented } from './ui';
 import { guildSpecies, hedgeSpecies, SECTOR_STYLE, ANIMALS, bearing, effectiveZone, FitFn } from '../lib/permaculture';
 import { soilColor } from '../lib/mapTexture';
+import { floodOnSite } from '../lib/checks';
 import type { WatchItem } from '../lib/season';
 import { CloudLightning, Snowflake, Map as MapIcon2 } from 'lucide-react';
 import { Compass, Fence, PawPrint, Rows3, Trees, TreeDeciduous } from 'lucide-react';
@@ -792,10 +793,9 @@ export function ExistingConditions({ site, units, reading, onLoad, onImportBuild
 }) {
   const r = site.surroundings;
   const errs = r ? Object.keys(r.errors || {}) : [];
-  const sfha = (r?.flood || []).filter((z) => z.sfha);
-  const floodArea = sfha.reduce((t, z) => t + polygonArea(z.ring), 0);
+  const flood = floodOnSite(site);
   const streams = r?.streams?.length ? r.streams : (r?.osm?.water || []).filter((w) => w.line);
-  const NAMES: Record<string, string> = { flood: 'flood maps', wetlands: 'wetlands', streams: 'streams', soils: 'soil map', osm: 'roads and buildings' };
+  const NAMES: Record<string, string> = { flood: 'flood maps', wetlands: 'wetlands', streams: 'streams', soils: 'soil map', osm: 'roads, paths, parking and buildings' };
   return (
     <div className="pt-2 border-t border-zinc-800 space-y-2" data-existing>
       <div className="text-xs uppercase tracking-wider text-zinc-500 flex items-center gap-1"><MapIcon2 size={12} /> Existing conditions</div>
@@ -807,10 +807,10 @@ export function ExistingConditions({ site, units, reading, onLoad, onImportBuild
       ) : (
         <>
           <div className="grid grid-cols-2 gap-2">
-            <Stat label="Flood area" value={sfha.length ? fmtArea(floodArea, units) : r.flood ? 'None mapped' : 'Not loaded'} sub={sfha.length ? [...new Set(sfha.map((z) => z.label.split(':')[0]))].join(', ') : 'FEMA'} />
-            <Stat label="Wetlands" value={(r.wetlands || []).length ? `${r.wetlands!.length} mapped` : r.wetlands ? 'None' : 'Not loaded'} sub={(r.wetlands || [])[0]?.type || 'USFWS inventory'} />
-            <Stat label="Streams" value={streams.length ? `${fmtLen(streams.reduce((t: number, x: any) => t + polylineLength(x.line), 0), units, 0)}` : 'None mapped'} sub={streams[0] ? ((streams[0] as any).name || (streams[0] as any).kind) : 'USGS hydrography'} />
-            <Stat label="On the map" value={`${r.osm?.buildings.length ?? 0} buildings`} sub={`${r.osm?.roads.length ?? 0} road and drive segments`} />
+            <Stat label="Flood area" value={!flood ? 'Not loaded' : flood.onNames.length ? fmtArea(flood.areaM2, units) : 'None on the site'} sub={flood?.onNames.length ? flood.onNames.join(', ') : flood?.nearNames.length ? `${flood.nearNames.join(', ')} just beyond the edge` : 'FEMA'} />
+            <Stat label="Wetlands" value={(r.wetlands || []).length ? `${r.wetlands!.length} mapped` : r.wetlands && !r.errors?.wetlands ? 'None' : 'Not loaded'} sub={(r.wetlands || [])[0]?.type || 'USFWS inventory'} />
+            <Stat label="Streams" value={streams.length ? `${fmtLen(streams.reduce((t: number, x: any) => t + polylineLength(x.line), 0), units, 0)}` : r.streams != null || (r.osm && !r.errors?.osm) ? 'None mapped' : 'Not loaded'} sub={streams[0] ? ((streams[0] as any).name || (streams[0] as any).kind) : 'USGS hydrography'} />
+            <Stat label="On the map" value={r.osm && !r.errors?.osm ? `${r.osm.buildings.length} buildings` : 'Not loaded'} sub={r.osm && !r.errors?.osm ? `${r.osm.roads.length} road and path segments, ${(r.osm.areas || []).filter((a) => a.kind === 'parking').length} parking lots` : 'OpenStreetMap'} />
           </div>
           {(r.soils || []).length > 0 && (
             <button onClick={onSoilMap} className="w-full text-left rounded-lg bg-zinc-900/60 border border-zinc-800 p-2 hover:border-zinc-600" data-soil-units>
@@ -821,7 +821,7 @@ export function ExistingConditions({ site, units, reading, onLoad, onImportBuild
           )}
           {(r.osm?.buildings.length ?? 0) > 0 && <Btn className="w-full" onClick={onImportBuildings} data-import-buildings><Home size={13} /> Add the mapped buildings as existing</Btn>}
           {!hasBoundary && <Btn className="w-full" onClick={onBoundary}>Draw or import the property line</Btn>}
-          {errs.length > 0 && <div className="text-[11px] text-amber-300">Could not reach the {errs.map((e) => NAMES[e] || e).join(', ')} this time. <button className="underline" onClick={onLoad} disabled={reading}>{reading ? 'Trying...' : 'Try again'}</button></div>}
+          {errs.length > 0 && <div className="text-[11px] text-amber-300" data-layers-failed>Could not reach the {errs.map((e) => NAMES[e] || e).join(', ')} this time, so the design was not checked against {errs.length > 1 ? 'them' : 'it'}. <button className="underline" onClick={onLoad} disabled={reading}>{reading ? 'Trying...' : 'Try again'}</button></div>}
           <div className="text-[10px] text-zinc-600">FEMA, USFWS, USGS, USDA NRCS and OpenStreetMap. Read {new Date(r.fetched).toLocaleDateString()}. Public maps miss things: walk the land and call 811 before digging.</div>
         </>
       )}

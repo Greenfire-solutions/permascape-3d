@@ -141,8 +141,10 @@ export interface Surroundings {
   soils?: SoilUnit[] | null;
   osm?: {
     buildings: { name: string | null; kind: string; ring: [number, number][] }[];
-    roads: { name: string | null; kind: string; surface: string | null; line: [number, number][] }[];
+    roads: { name: string | null; kind: string; service?: string | null; surface: string | null; line: [number, number][] }[];
     water: { name: string | null; kind: string; line?: [number, number][]; ring?: [number, number][] }[];
+    /** parking lots and woodland (older saved projects have none) */
+    areas?: { name: string | null; kind: 'parking' | 'woodland'; ring: [number, number][] }[];
   } | null;
 }
 

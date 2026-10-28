@@ -11,7 +11,10 @@ import { advise, rangesText, SiteClimate, doyLabel } from '../lib/advisor';
 import { pointInPolygon } from '../lib/terrain';
 import { waterBudget, reviewDesign, ANIMALS, bearing, effectiveZone, WaterUseIn } from '../lib/permaculture';
 import { estimate } from '../lib/estimate';
-import { streamLines } from '../lib/checks';
+import { streamLines, floodOnSite, layerStatus } from '../lib/checks';
+
+const FOOTWAYS = ['footway', 'path', 'pedestrian', 'steps', 'cycleway', 'bridleway', 'corridor'];
+const list = (xs: string[]) => (xs.length <= 2 ? xs.join(' and ') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
 import type { Profile } from '../lib/api';
 
 interface Props {
@@ -25,6 +28,7 @@ const money = (v: number) => `$${Math.round(v).toLocaleString()}`;
 export default function Report({ name, site, objects, features, stats, units, image, plan, onClose, sc, brief = {}, goals = [], prices = {}, water = {}, profile = {}, proposal = '', onProposal, onDraft, slopeAt, wetAt }: Props) {
   const d = useMemo(() => designSummary(site, objects, features), [site, objects, features]);
   const c = site.climate, s = site.soil, ref = site.surroundings;
+  const flood = floodOnSite(site);
   const plants = objects.filter((o) => o.type === 'plant');
   const others = objects.filter((o) => o.type !== 'plant');
   const zone = effectiveZone(site);
@@ -131,10 +135,11 @@ export default function Report({ name, site, objects, features, stats, units, im
         {ref && (<>
           <H>What the public maps show</H>
           <table className="text-sm"><tbody>
-            <Row k="Flood" v={(ref.flood || []).filter((z) => z.sfha).length ? `${[...new Set((ref.flood || []).filter((z) => z.sfha).map((z) => z.label))].join('; ')}. ${fmtArea((ref.flood || []).filter((z) => z.sfha).reduce((t, z) => t + polygonArea(z.ring), 0), units)} of the site is in the mapped 1% a year flood area.` : ref.flood ? 'No mapped flood area on the site.' : 'Flood maps could not be loaded.'} />
-            <Row k="Wetlands" v={(ref.wetlands || []).length ? (ref.wetlands || []).map((w) => `${w.type} (${w.code})`).join('; ') : ref.wetlands ? 'None mapped.' : 'Not loaded.'} />
-            <Row k="Streams" v={streamLines(site).length ? streamLines(site).map((x) => `${x.name}, ${fmtLen(polylineLength(x.line), units, 0)} on the site`).join('; ') : 'None mapped on the site.'} />
-            <Row k="Roads and buildings" v={`${(ref.osm?.roads || []).length} road or driveway segments, ${(ref.osm?.buildings || []).length} mapped buildings`} />
+            <Row k="Flood" v={!flood ? 'The FEMA flood map could not be loaded, so flooding was not checked.' : flood.onLabels.length ? `${flood.onLabels.join('; ')}. ${fmtArea(flood.areaM2, units)} of the site is in the mapped 1% a year flood area.` : `No part of the site is in a mapped 1% a year flood area.${flood.nearNames.length ? ` ${list(flood.nearNames)} ${flood.nearNames.length > 1 ? 'are' : 'is'} mapped just beyond the edge of the site.` : ''}`} />
+            <Row k="Wetlands" v={(ref.wetlands || []).length ? (ref.wetlands || []).map((w) => `${w.type} (${w.code})`).join('; ') : ref.wetlands && !ref.errors?.wetlands ? 'None mapped.' : 'The wetlands map could not be loaded, so wetlands were not checked.'} />
+            <Row k="Streams" v={streamLines(site).length ? streamLines(site).map((x) => `${x.name}, ${fmtLen(polylineLength(x.line), units, 0)} on the site`).join('; ') : layerStatus(site).find((l) => l.key === 'streams')?.loaded ? 'None mapped on the site.' : 'The stream map could not be loaded, so streams were not checked.'} />
+            <Row k="Roads and buildings" v={ref.osm && !ref.errors?.osm ? `${(ref.osm.roads || []).filter((r) => !FOOTWAYS.includes(r.kind)).length} road or driveway segments, ${(ref.osm.roads || []).filter((r) => FOOTWAYS.includes(r.kind)).length} footpath segments, ${(ref.osm.buildings || []).length} mapped buildings, ${(ref.osm.areas || []).filter((a) => a.kind === 'parking').length} parking lots, ${fmtArea((ref.osm.areas || []).filter((a) => a.kind === 'woodland').reduce((t, a) => t + polygonArea(a.ring), 0), units)} of mapped woodland` : 'The OpenStreetMap layer could not be loaded, so roads, paths, parking and buildings were not checked.'} />
+            {(ref.soils == null || ref.errors?.soils) && <Row k="Soil map" v="The soil map could not be loaded, so soils were not checked." />}
           </tbody></table>
           {(ref.soils || []).length > 0 && (
             <table className="w-full text-xs mt-3"><thead><tr className="text-left text-zinc-500 border-b border-zinc-200"><th className="py-1">Soil map unit</th><th>Share</th><th>Drainage</th><th>Floods</th><th>Runoff group</th><th>pH</th></tr></thead>
@@ -189,7 +194,7 @@ export default function Report({ name, site, objects, features, stats, units, im
 
         <H>Design review: {review.overall} of 100</H>
         <table className="text-sm"><tbody>
-          {review.areas.map((a) => <Row key={a.id} k={`${a.name} (${a.score})`} v={T(a.findings.filter((f) => f.level !== 'good').map((f) => f.text).join(' ') || 'All checks met.')} />)}
+          {review.areas.map((a) => <Row key={a.id} k={`${a.name} (${a.scored ? a.score : 'not scored'})`} v={T(a.findings.filter((f) => f.level !== 'good').map((f) => f.text).join(' ') || (a.scored ? 'All checks met.' : 'Nothing to judge yet.'))} />)}
         </tbody></table>
 
         {groupedPlants.length > 0 && (() => {

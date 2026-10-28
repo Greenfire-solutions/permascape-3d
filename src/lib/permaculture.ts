@@ -8,7 +8,7 @@ import type { Species, Layer } from './library.ts';
 import type { Grid } from './terrain.ts';
 import { heightAt, contourThrough, applyEarthwork, digPond, polygonArea, polylineLength, pointInPolygon, slopeGrid, slopeAspectAt } from './terrain.ts';
 import { sunPosition } from './sun.ts';
-import { plantChecks, sitingChecks, CONFLICTS, groundProblem, lineSlope } from './checks.ts';
+import { plantChecks, sitingChecks, CONFLICTS, groundProblem, lineSlope, layerStatus } from './checks.ts';
 import { isHouse } from './estimate.ts';
 
 /** The home the zones and sectors radiate from: the house by name, else a house-sized dwelling, else the first building. */
@@ -305,7 +305,8 @@ export function waterBudget(site: Site, objects: SiteObject[], features: Feature
 
 export type FixId = 'guilds' | 'tank' | 'zones' | 'swales' | 'compost' | 'pollinators' | 'nfixers' | 'misfits' | 'windbreak' | 'sectors' | 'house' | 'select' | 'read' | 'plants';
 export interface Finding { level: 'good' | 'tip' | 'warn'; text: string; fix?: FixId; fixLabel?: string; ids?: string[] }
-export interface ReviewArea { id: string; name: string; score: number; findings: Finding[] }
+/** `scored` is false when nothing in the area could be judged yet: its score is then left out of the overall. */
+export interface ReviewArea { id: string; name: string; score: number; scored: boolean; findings: Finding[] }
 
 export interface ReviewInput {
   site: Site; objects: SiteObject[]; features: Feature[]; zone: number | null;
@@ -330,8 +331,8 @@ export function reviewDesign(d: ReviewInput) {
     const checks = all.filter((c) => !c.na);
     const total = checks.reduce((s, c) => s + c.w, 0);
     const base = total ? (checks.reduce((s, c) => s + (c.ok ? c.w : 0), 0) / total) * 100 : 0;
-    const score = Math.max(0, Math.round(base - penalty));
-    areas.push({ id, name, score, findings: [...extra, ...checks.map((c) => (c.ok ? { level: 'good', text: c.good } as Finding : c.bad))] });
+    const score = total ? Math.max(0, Math.round(base - penalty)) : 0;
+    areas.push({ id, name, score, scored: total > 0, findings: [...extra, ...checks.map((c) => (c.ok ? { level: 'good', text: c.good } as Finding : c.bad))] });
   };
   const checks: Check[] = [...plantChecks(d.objects, d.site), ...sitingChecks({ site: d.site, objects: d.objects, features: d.features, slopeAt: d.slopeAt, wetAt: d.wetAt })];
   const asFinding = (c: Check): Finding => ({ level: c.level, text: c.text, fix: 'select', fixLabel: 'Show me', ids: c.ids });
@@ -344,12 +345,17 @@ export function reviewDesign(d: ReviewInput) {
   const swales = d.features.filter((f) => f.kind === 'swale');
   const ponds = d.objects.filter((o) => o.type === 'pond');
   const siteHa = (d.site.size * d.site.size) / 10000;
+  // no roof means nothing to catch: the roof rules wait, they do not pass. Gentle or small land
+  // makes swales or a pond less needed: said as a note, not scored as a success.
+  const waterNotes: Finding[] = [];
+  if (d.meanSlope < 3) waterNotes.push({ level: 'good', text: 'The land is gentle; swales matter less here.' });
+  if (siteHa < 0.4) waterNotes.push({ level: 'good', text: 'A small site: a pond is optional, tanks and mulched soil can hold the water.' });
   area('water', 'Water', [
-    { ok: roofs.length === 0 || tanks.length > 0, w: 3, good: 'Roof water is caught in a tank.', bad: { level: 'warn', text: 'The roofs shed water that nothing catches. A tank by the house is the cheapest water you will ever get.', fix: 'tank', fixLabel: 'Add a tank by the house' } },
-    { ok: d.roofCatchL == null || tankL >= Math.min(d.roofCatchL * 0.15, 40000) || roofs.length === 0, w: 2, good: 'Tank storage is in proportion to the roof.', bad: { level: 'tip', text: 'The tanks hold little of what the roof sheds in a year. Size up, or open the Water budget to see the driest months.', fix: 'tank', fixLabel: 'Add another tank' } },
-    { ok: d.meanSlope < 3 || swales.length > 0, w: 3, good: d.meanSlope < 3 ? 'The land is gentle; swales matter less here.' : 'Swales on contour slow the water and sink it into the slope.', bad: { level: 'warn', text: `The land averages a ${d.meanSlope.toFixed(0)}% slope and water runs straight off it. Dig a swale on contour above the planting.`, fix: 'swales', fixLabel: 'Use the contour swale tool' } },
-    { ok: siteHa < 0.4 || ponds.length > 0, w: 2, good: siteHa < 0.4 ? 'A small site: tanks and soil hold the water.' : 'A pond stores water in the landscape for animals, fire and dry months.', bad: { level: 'tip', text: 'On this much land a pond in a low spot, fed by swale overflow, is the backbone of the water system.' } },
-  ]);
+    { na: roofs.length === 0, ok: tanks.length > 0, w: 3, good: 'Roof water is caught in a tank.', bad: { level: 'warn', text: 'The roofs shed water that nothing catches. A tank by the house is the cheapest water you will ever get.', fix: 'tank', fixLabel: 'Add a tank by the house' } },
+    { na: roofs.length === 0 || tanks.length === 0 || d.roofCatchL == null, ok: tankL >= Math.min((d.roofCatchL ?? 0) * 0.15, 40000), w: 2, good: 'Tank storage is in proportion to the roof.', bad: { level: 'tip', text: 'The tanks hold little of what the roof sheds in a year. Size up, or open the Water budget to see the driest months.', fix: 'tank', fixLabel: 'Add another tank' } },
+    { na: d.meanSlope < 3, ok: swales.length > 0, w: 3, good: 'Swales on contour slow the water and sink it into the slope.', bad: { level: 'warn', text: `The land averages a ${d.meanSlope.toFixed(0)}% slope and water runs straight off it. Dig a swale on contour above the planting.`, fix: 'swales', fixLabel: 'Use the contour swale tool' } },
+    { na: siteHa < 0.4, ok: ponds.length > 0, w: 2, good: 'A pond stores water in the landscape for animals, fire and dry months.', bad: { level: 'tip', text: 'On this much land a pond in a low spot, fed by swale overflow, is the backbone of the water system.' } },
+  ], waterNotes);
 
   // diversity and stacking
   const species = new Set(sp.map((s) => s.id));
@@ -380,10 +386,12 @@ export function reviewDesign(d: ReviewInput) {
   const house = homeOf(d.objects);
   const z1 = zones.filter((z) => (z.zone ?? 1) <= 1);
   const near = (o: SiteObject | undefined, maxM: number, types: string[]) => !!o && d.objects.some((x) => types.includes(x.type) && Math.hypot(x.x - o.x, x.y - o.y) <= maxM);
-  const zone1Near = z1.some((z) => { const c = centroid(z.points); return Math.hypot(c[0] - house!.x, c[1] - house!.y) < 45; });
+  const zone1Near = !!house && z1.some((z) => { const c = centroid(z.points); return Math.hypot(c[0] - house.x, c[1] - house.y) < 45; });
   area('zones', 'Zones and flow', [
     { ok: !!house, w: 1, good: 'A home base is placed: zones radiate from it.', bad: { level: 'tip', text: 'No house or home base yet. Zones are planned outward from where you live and work.', fix: 'house', fixLabel: 'Place the house' } },
-    { ok: zones.length >= 2, w: 3, good: `${zones.length} zones drawn.`, bad: { level: 'warn', text: 'No zones mapped. Draw zone 1 (daily visits) next to the house, then zones 2 and 3 further out.', fix: 'zones', fixLabel: 'Use the zone tool' } },
+    { ok: zones.length >= 2, w: 3, good: `${zones.length} zones drawn.`, bad: zones.length === 0
+      ? { level: 'warn', text: 'No zones mapped. Draw zone 1 (daily visits) next to the house, then zones 2 and 3 further out.', fix: 'zones', fixLabel: 'Use the zone tool' }
+      : { level: 'tip', text: `Only one zone is drawn (${zones[0].name}). Add the next zones out from the house, so it is clear what gets visited daily, weekly and seasonally.`, fix: 'zones', fixLabel: 'Use the zone tool' } },
     { na: !house || !z1.length, ok: zone1Near, w: 2, good: 'Zone 1 sits next to the house, where you pass every day.', bad: { level: 'tip', text: 'Zone 1 is far from the house. Herbs and salad you visit daily belong at the back door.' } },
     { ok: d.objects.some((o) => o.type === 'compost') && (!house || near(house, 60, ['compost'])), w: 2, good: 'Compost is close enough to use.', bad: { level: 'tip', text: 'No compost near the kitchen and garden. It closes the nutrient loop.', fix: 'compost', fixLabel: 'Add compost bays' } },
     { ok: d.features.some((f) => f.kind === 'path'), w: 1, good: 'Paths connect the design.', bad: { level: 'tip', text: 'No paths drawn. Paths decide what gets visited and what gets forgotten.' } },
@@ -407,17 +415,37 @@ export function reviewDesign(d: ReviewInput) {
     { ok: d.objects.some((o) => ['coop'].includes(o.type)) || d.features.some((f) => f.kind === 'paddock'), w: 1, good: 'Animals cycle nutrients through the system.', bad: { level: 'tip', text: 'No animals yet. Even a few hens turn scraps into eggs and fertility.' } },
   ]);
 
-  // siting: water, slope, flood and the law
+  // siting: water, slope, flood and the law. A map that did not load is said out loud and left
+  // out of the score: "not checked" must never read as "checked and fine".
   const siting = checks.filter((c) => c.area === 'siting');
   const s = d.site.surroundings;
+  const designed = d.objects.some((o) => o.status !== 'existing') || d.features.some((f) => f.status !== 'existing' && !['sector', 'boundary'].includes(f.kind));
+  const mapLayers = layerStatus(d.site);
+  const notChecked: Finding[] = d.site.lat == null
+    ? [{ level: 'tip', text: 'Not checked against flood, stream, wetland, soil or road maps: a sandbox has no public maps.' }]
+    : !s
+      ? [{ level: 'tip', text: 'Not checked yet: the flood, stream, wetland, soil and road maps are not loaded for this land, so this area is not scored. Load them in Site before giving this review to a client.', fix: 'read', fixLabel: 'Load them in Site' }]
+      : mapLayers.filter((l) => !l.loaded).map((l) => ({ level: 'tip', text: `Not checked: ${l.name} did not load${/answered (\d+)/.test(l.error || '') ? ` (the service answered with error ${(l.error || '').match(/answered (\d+)/)![1]})` : l.error && l.error !== 'not loaded' ? ' (the service did not answer in time)' : ''}, so nothing was checked against it and it does not count in the score. Try again in Site before giving this review to a client.`, fix: 'read', fixLabel: 'Try again in Site' } as Finding));
+  const viaNotes: Finding[] = mapLayers.filter((l) => l.loaded && l.note).map((l) => ({ level: 'tip', text: `Streams: ${l.note}. Small creeks may be missing.` }));
+  const GOOD: Record<string, string> = {
+    flood: 'Checked against the FEMA flood map: nothing proposed is built in the mapped flood area.',
+    wetlands: 'Checked against the wetlands map: nothing proposed is in a mapped wetland.',
+    streams: 'Checked against the mapped streams: everything proposed keeps its distance from them.',
+    soils: 'Checked against the soil map: no building sits on poorly drained soil.',
+    osm: 'Checked against the mapped roads, paths, parking and buildings: nothing proposed is built over them.',
+  };
+  const W: Record<string, number> = { flood: 2, wetlands: 1, streams: 2, soils: 1, osm: 2 };
+  const warnsIn = (k: string) => siting.filter((c) => c.level === 'warn' && c.layer === k).length;
+  const terrainChecked = !!(d.slopeAt || d.wetAt);
   area('siting', 'Siting and safety', [
-    { ok: !!s, w: 2, good: 'Flood maps, streams, wetlands and soils are loaded and checked.', bad: { level: 'tip', text: d.site.lat == null ? 'A sandbox has no public maps to check against.' : 'Load the flood maps, streams, wetlands and soil map for this land so the design can be checked against them.', fix: d.site.lat == null ? undefined : 'read', fixLabel: 'Load them in Site' } },
-    { na: !d.objects.length && !d.features.some((f) => f.kind !== 'sector'), ok: siting.filter((c) => c.level === 'warn').length === 0, w: 3, good: 'Nothing sits in a flood area, a stream buffer, a wetland or a drainage line.', bad: { level: 'tip', text: '' } },
-  ], siting.map(asFinding), penaltyOf(siting.filter((c) => c.level === 'tip')) / 2);
+    ...mapLayers.filter((l) => l.loaded && s).map((l) => ({ na: !designed, ok: warnsIn(l.key) === 0, w: W[l.key], good: GOOD[l.key], bad: { level: 'tip', text: '' } } as Rule)),
+    { na: !designed || !terrainChecked, ok: warnsIn('site') === 0, w: 2, good: 'Checked against the measured terrain: nothing proposed sits on a natural drainage line or too steep a slope, or outside the property line.', bad: { level: 'tip', text: '' } },
+  ], [...notChecked, ...viaNotes, ...siting.map(asFinding)], penaltyOf(siting.filter((c) => c.level === 'tip')) / 2);
   const sit = areas[areas.length - 1];
   sit.findings = sit.findings.filter((f) => f.text);
 
-  const overall = Math.round(areas.reduce((t, a) => t + a.score, 0) / areas.length);
+  const scored = areas.filter((a) => a.scored);
+  const overall = scored.length ? Math.round(scored.reduce((t, a) => t + a.score, 0) / scored.length) : 0;
   return { overall, areas, checks };
 }
 

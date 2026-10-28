@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const PORT = 8142, B = `http://127.0.0.1:${PORT}`;
+const PORT = Number(process.env.PERMASCAPE_TEST_PORT || 8142), B = `http://127.0.0.1:${PORT}`;
 const DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'permascape-e2e-'));
 const shotsAt = process.argv.indexOf('--shots');
 const SHOTS = shotsAt > 0 ? process.argv[shotsAt + 1] : null;

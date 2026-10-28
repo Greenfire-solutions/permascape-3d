@@ -310,7 +310,8 @@ export function makeSources(cacheDir) {
     const bb = { west: b.west - pad, east: b.east + pad, south: b.south - pad, north: b.north + pad };
     // the federal map servers drop connections and time out under load: try a few times
     const patient = async (fn) => { let err; for (let k = 0; k < 4; k++) { try { return await fn(); } catch (e) { err = e; await new Promise((r) => setTimeout(r, 1500 * (k + 1))); } } throw err; };
-    const part = (name, fn) => cachedJson('surround-' + name, key, fn).then((v) => [name, v, null]).catch((e) => [name, null, e.message]);
+    // osm2: the cached OpenStreetMap layer gained parking, woodland and path details
+    const part = (name, fn) => cachedJson('surround-' + (name === 'osm' ? 'osm2' : name), key, fn).then((v) => [name, v, null]).catch((e) => [name, null, e.message]);
     const parts = await Promise.all([
       part('flood', async () => parseFlood(await patient(() => getJson(`https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query?outFields=FLD_ZONE,ZONE_SUBTY,SFHA_TF&maxAllowableOffset=0.00002&${envelope(bb)}`, {}, 60000)), lat, lon, size)),
       part('wetlands', async () => parseWetlands(await patient(() => getJson(`https://fwspublicservices.wim.usgs.gov/wetlandsmapservice/rest/services/Wetlands/MapServer/0/query?outFields=WETLAND_TYPE,ATTRIBUTE&maxAllowableOffset=0.00002&${envelope(bb)}`)), lat, lon, size)),
@@ -318,7 +319,7 @@ export function makeSources(cacheDir) {
       part('soils', () => soilMap(lat, lon, size, bb)),
       part('osm', async () => parseOsm(await retry(() => getJson('https://overpass-api.de/api/interpreter', {
         method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: 'data=' + encodeURIComponent(`[out:json][timeout:25];(way["building"](${bb.south},${bb.west},${bb.north},${bb.east});way["highway"](${bb.south},${bb.west},${bb.north},${bb.east});way["waterway"](${bb.south},${bb.west},${bb.north},${bb.east});way["natural"="water"](${bb.south},${bb.west},${bb.north},${bb.east}););out geom;`),
+        body: 'data=' + encodeURIComponent(`[out:json][timeout:25];(way["building"](${bb.south},${bb.west},${bb.north},${bb.east});way["highway"](${bb.south},${bb.west},${bb.north},${bb.east});way["waterway"](${bb.south},${bb.west},${bb.north},${bb.east});way["natural"="water"](${bb.south},${bb.west},${bb.north},${bb.east});nwr["amenity"="parking"](${bb.south},${bb.west},${bb.north},${bb.east});nwr["landuse"="forest"](${bb.south},${bb.west},${bb.north},${bb.east});nwr["natural"="wood"](${bb.south},${bb.west},${bb.north},${bb.east}););out geom;`),
       }, 40000)), lat, lon, size)),
     ]);
     const out = { fetched: new Date().toISOString(), errors: {} };

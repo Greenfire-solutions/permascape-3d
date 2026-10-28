@@ -517,19 +517,58 @@ export function parseStreams(fc, lat, lon, size) {
   return out;
 }
 
-/** OpenStreetMap ways from Overpass ("out geom"): buildings, roads and water, in local metres. */
+/**
+ * OpenStreetMap from Overpass ("out geom"), in local metres: buildings, roads and paths (with the
+ * service tag, so parking aisles and driveways can be told apart), water, and the areas a design
+ * must not be put on blindly: parking lots and woodland. Woods and big car parks are often
+ * multipolygon relations, whose outer member ways are joined back into rings.
+ */
 export function parseOsm(j, lat, lon, size) {
   const local = toLocal(lat, lon), h = size / 2;
-  const buildings = [], roads = [], water = [];
+  const buildings = [], roads = [], water = [], areas = [];
+  const areaKind = (t) => (t.amenity === 'parking' || t.parking === 'surface' ? 'parking' : t.landuse === 'forest' || t.natural === 'wood' ? 'woodland' : null);
   for (const el of j?.elements || []) {
+    const t = el.tags || {};
+    if (el.type === 'relation') {
+      const kind = areaKind(t);
+      if (!kind || t.type !== 'multipolygon') continue;
+      for (const r of joinRings((el.members || []).filter((m) => m.type === 'way' && m.role !== 'inner' && m.geometry).map((m) => m.geometry.map((g) => local([g.lon, g.lat]))))) {
+        const ring = clipRing(r, h);
+        if (ring.length) areas.push({ name: t.name || null, kind, ring });
+      }
+      continue;
+    }
     if (el.type !== 'way' || !el.geometry) continue;
     const pts = el.geometry.map((g) => local([g.lon, g.lat]));
-    const t = el.tags || {};
     const closed = pts.length > 3 && el.nodes && el.nodes[0] === el.nodes[el.nodes.length - 1];
     if (t.building) { const ring = clipRing(pts, h); if (ring.length) buildings.push({ name: t.name || null, kind: t.building === 'yes' ? 'building' : t.building, ring }); }
-    else if (t.highway) for (const run of clipLine(pts, h)) roads.push({ name: t.name || null, kind: t.highway, surface: t.surface || null, line: run });
+    else if (t.highway) for (const run of clipLine(pts, h)) roads.push({ name: t.name || null, kind: t.highway, service: t.service || null, surface: t.surface || null, line: run });
     else if (t.waterway) for (const run of clipLine(pts, h)) water.push({ name: t.name || null, kind: t.waterway, line: run });
     else if (t.natural === 'water' && closed) { const ring = clipRing(pts, h); if (ring.length) water.push({ name: t.name || null, kind: t.water || 'water', ring }); }
+    else if (areaKind(t) && closed) { const ring = clipRing(pts, h); if (ring.length) areas.push({ name: t.name || null, kind: areaKind(t), ring }); }
   }
-  return { buildings, roads, water };
+  return { buildings, roads, water, areas };
+}
+
+/** Joins way pieces that share end points into closed rings (a multipolygon's outer boundary). */
+export function joinRings(ways) {
+  const same = (a, b) => Math.abs(a[0] - b[0]) < 0.01 && Math.abs(a[1] - b[1]) < 0.01;
+  const left = ways.filter((w) => w.length >= 2).map((w) => w.slice());
+  const rings = [];
+  while (left.length) {
+    let ring = left.shift();
+    let grew = true;
+    while (!same(ring[0], ring[ring.length - 1]) && grew) {
+      grew = false;
+      for (let i = 0; i < left.length; i++) {
+        const w = left[i], end = ring[ring.length - 1];
+        if (same(end, w[0])) ring = ring.concat(w.slice(1));
+        else if (same(end, w[w.length - 1])) ring = ring.concat(w.slice(0, -1).reverse());
+        else continue;
+        left.splice(i, 1); grew = true; break;
+      }
+    }
+    if (ring.length >= 4 && same(ring[0], ring[ring.length - 1])) rings.push(ring);
+  }
+  return rings;
 }
