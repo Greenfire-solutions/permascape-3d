@@ -54,7 +54,7 @@ NATIVE="$(find "$WORK/deps/node_modules" \( -name '*.node' -o -name 'binding.gyp
 # What ships: the built app, the server, the launchers, and the source to make it your own.
 SHIP=("READ ME FIRST.txt" CLAUDE.md README.md package.json package-lock.json index.html vite.config.ts
       tailwind.config.js postcss.config.js tsconfig.json src server test
-      scripts/setup.sh scripts/start-permascape.sh scripts/source-hash.mjs
+      scripts/setup.sh scripts/start-permascape.sh scripts/source-hash.mjs scripts/package.sh .gitignore
       "Start Permascape.app" "Start Permascape.command")
 JUNK=(--exclude '.DS_Store' --exclude '*.log' --exclude '.env*' --exclude 'node_modules')
 

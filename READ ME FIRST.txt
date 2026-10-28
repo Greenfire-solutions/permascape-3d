@@ -41,9 +41,9 @@ folder instead. It does the same thing.
 YOUR FIRST TEN MINUTES
 ----------------------
 
-1. Type an address and press Find. Your own land is best. To look around first, try a public
-   farm such as:   Rodale Institute, Kutztown, PA
-   Coordinates (40.5520, -75.7466) and Google Maps links work too.
+1. Type an address and press Find. Your own land is best. To look around first, try the
+   address of a well known organic research farm:   611 Siegfriedale Rd, Kutztown, PA
+   Coordinates (for example 40.5501, -75.7226) and Google Maps links work too.
 
 2. Check the square on the satellite preview sits on the land (click to move it), pick a site
    size, and press "Build this site". In under a minute the land is there in 3D, with its real
