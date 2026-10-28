@@ -236,7 +236,7 @@ export const roadHalfWidth = (r: Pick<Road, 'kind'>) =>
   FOOT.includes(r.kind) ? 1 : r.kind === 'track' ? 2 : ['motorway', 'trunk', 'primary'].includes(r.kind) ? 6 : ['secondary', 'tertiary'].includes(r.kind) ? 4.5 : 3;
 /** What a person calls it: "the footpath", "the parking aisle", "the driveway", "Main Street". */
 export function roadWord(r: Pick<Road, 'kind' | 'name'> & { service?: string | null }) {
-  if (FOOT.includes(r.kind)) return r.name ? `the ${r.name} path` : r.kind === 'cycleway' ? 'a mapped bike path' : r.kind === 'steps' ? 'mapped steps' : 'a mapped footpath';
+  if (FOOT.includes(r.kind)) return r.name ? (/path|trail|walk|way|steps/i.test(r.name) ? `the ${r.name}` : `the ${r.name} path`) : r.kind === 'cycleway' ? 'a mapped bike path' : r.kind === 'steps' ? 'mapped steps' : 'a mapped footpath';
   if (r.kind === 'service' && r.service === 'parking_aisle') return 'a parking lot aisle';
   if (r.name) return r.name;
   if (r.kind === 'service') return r.service === 'driveway' || !r.service ? 'a driveway' : 'a service road';
@@ -273,7 +273,7 @@ const fmtM2 = (m2: number) => `about ${Math.max(10, Math.round((m2 * 10.764) / 1
  * Proposed things put on top of what OpenStreetMap shows is already there: roads, driveways,
  * footpaths, parking lots and buildings (a real problem), and woodland (a soft warning: trees would
  * have to come down). Zones are plans for use, not things built, so only parking and woodland
- * inside zones 1 to 3 are mentioned. Existing things in the design are never judged.
+ * inside zones 1 to 3 are mentioned, and buildings inside zone 3. Existing things in the design are never judged.
  */
 export function overlapChecks(d: Pick<SitingInput, 'site' | 'objects' | 'features'>): Check[] {
   const osm = d.site.surroundings?.osm;
@@ -316,11 +316,12 @@ export function overlapChecks(d: Pick<SitingInput, 'site' | 'objects' | 'feature
     if (area < 4) continue;
     const step = Math.max(1, Math.min(3, Math.sqrt(area) / 12));
     const isZone = f.kind === 'zone';
-    const hs = hitsOn(samplePolygon(f.points, step), step * step, { buildings: isZone, roads: isZone })
+    // zones 1 and 2 hold the house and its sheds by design; a zone 3 field over a building does not
+    const hs = hitsOn(samplePolygon(f.points, step), step * step, { buildings: isZone && (f.zone ?? 1) < 3, roads: isZone })
       .filter((h) => h.m2 >= Math.max(isZone ? 40 : 15, area * 0.05));
     const hard = hs.filter((h) => h.hard), soft = hs.filter((h) => !h.hard);
-    const what = isZone ? `${f.name} (zone ${f.zone ?? 1})` : f.name;
-    if (hard.length) out.push({ layer: 'osm', level: 'tip', area: 'siting', ids: [f.id], text: `${what} takes in ${list(hard.map((h) => `${fmtM2(h.m2)} of ${h.what}`))}. ${isZone ? 'Is the parking staying? If not, say so in the plan; if it is, draw the zone around it.' : 'Animals and fencing cannot go there: fence it out or move the paddock.'}` });
+    const what = isZone && !/zone/i.test(f.name) ? `${f.name} (zone ${f.zone ?? 1})` : f.name;
+    if (hard.length) out.push({ layer: 'osm', level: 'tip', area: 'siting', ids: [f.id], text: `${what} takes in ${list(hard.map((h) => `${fmtM2(h.m2)} of ${h.what}`))}. ${isZone ? 'Is that staying? If not, say in the plan that it comes out; if it is, draw the zone around it.' : 'Animals and fencing cannot go there: fence it out or move the paddock.'}` });
     if (soft.length) out.push({ layer: 'osm', level: 'tip', area: 'siting', ids: [f.id], text: `${what} takes in ${list(soft.map((h) => `${fmtM2(h.m2)} of ${h.what}`))}. ${isZone ? 'Using it as a busy zone means clearing trees: check that is wanted, or keep the woods as zone 4 or 5.' : 'Animals in woodland strip the young growth: decide if that is the plan.'}` });
   }
   return out;

@@ -88,6 +88,15 @@ test('things drawn over mapped parking, paths, buildings and woods are flagged; 
   // a zone 1 around the house takes in the house and the drive without complaint
   const z1 = { id: id(), kind: 'zone', zone: 1, name: 'Zone 1', points: [[30, 30], [70, 30], [70, 70], [30, 70]] };
   assert.equal(overlapChecks({ site: s, objects: [], features: [z1] }).length, 0);
+  // names read naturally: no "Zone 1 (zone 1)", no "Entrance Path path"
+  const named = site({ surroundings: loaded({ osm: { ...OSM, roads: [{ name: 'Entrance Path', kind: 'footway', service: null, surface: null, line: [[-80, 0], [80, 0]] }] } }) });
+  const zp = { id: id(), kind: 'zone', zone: 1, name: 'Zone 1', points: [[-70, -80], [-10, -80], [-10, -40], [-70, -40]] };
+  const tn = overlapChecks({ site: named, objects: [obj('garden', 0, 0, { name: 'Bed', width: 1.2, depth: 6 })], features: [zp] }).map((c) => c.text).join(' | ');
+  assert.match(tn, /on top of the Entrance Path,/);
+  assert.match(tn, /^Zone 1 takes in|\| Zone 1 takes in/);
+  // a zone 3 field drawn over a mapped building is mentioned; zone 1 around one is not
+  const z3 = { id: id(), kind: 'zone', zone: 3, name: 'Grain field', points: [[35, 35], [65, 35], [65, 65], [35, 65]] };
+  assert.match(overlapChecks({ site: s, objects: [], features: [z3] }).map((c) => c.text).join(' '), /Grain field \(zone 3\) takes in .* of the existing Visitor Center/);
   // clear ground: nothing to say
   assert.equal(overlapChecks({ site: s, objects: [obj('building', -40, 40, { width: 8, depth: 10 })], features: [] }).length, 0);
   // the review: the warning costs the siting score and its "nothing built over them" line is not shown
