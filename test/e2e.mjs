@@ -34,6 +34,8 @@ for (let i = 0; ; i++) {
 // ---- chrome over a pipe
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'permascape-chrome-'));
 const chrome = spawn(CHROME, ['--headless=new', '--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
+  // Never a sound or a keychain dialog on the owner's Mac.
+  '--mute-audio', '--use-mock-keychain', '--password-store=basic',
   '--remote-debugging-pipe', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions',
   '--window-size=1500,950', '--hide-scrollbars', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
 chrome.stderr.on('data', () => {});
