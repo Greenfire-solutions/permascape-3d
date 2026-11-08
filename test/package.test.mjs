@@ -5,7 +5,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import net from 'node:net';
+import http from 'node:http';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { sourceHash, builtHash } from '../scripts/source-hash.mjs';
 
@@ -66,4 +69,62 @@ test('the download carries everything, keeps projects outside the app folder, an
   for (const want of ['npm run dev', 'npm test', 'Ideas to ask']) assert.ok(guide.includes(want), `CLAUDE.md mentions ${want}`);
   assert.ok(!/[—–]/.test(guide) && !/[—–]/.test(read('READ ME FIRST.txt')));
   assert.match(read('READ ME FIRST.txt'), /Permascape 3D Data/, 'READ ME says where projects are saved');
+});
+
+// ---------------------------------------------------------------- Windows
+
+test('the Windows download: a .cmd with Windows line endings, its own READ ME, and a Windows target in package.sh', () => {
+  const cmdFile = path.join(ROOT, 'Start Permascape.cmd');
+  if (!fs.existsSync(cmdFile)) return; // a Mac download leaves the Windows launcher out
+  const cmd = fs.readFileSync(cmdFile, 'utf8');
+  assert.ok(cmd.split('\n').slice(0, -1).every((l) => l.endsWith('\r')), 'every line ends in CRLF');
+  assert.match(cmd, /runtime\\node\\node\.exe/);
+  assert.match(cmd, /scripts\\start-windows\.mjs/);
+  assert.match(cmd, /pause/, 'an error stays on screen');
+  const rm = read('READ ME FIRST (Windows).txt');
+  assert.match(rm, /Run anyway/, 'the SmartScreen step');
+  assert.match(rm, /Extract All/);
+  assert.match(rm, /Permascape 3D Data/);
+  assert.ok(!/[—–]/.test(rm) && !/npm|git clone/i.test(rm));
+  const pkg = read('scripts/package.sh');
+  assert.match(pkg, /\(Windows\)\.zip/);
+  assert.match(pkg, /NODE_SHA_winx64/);
+  assert.match(read('scripts/setup.sh'), /NODE_SHA_winx64="[0-9a-f]{64}"/);
+  assert.match(read('.gitattributes'), /\*\.cmd text eol=crlf/);
+});
+
+const freePort = () => new Promise((resolve) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
+const runLauncher = (port, data, logs) => new Promise((resolve) => {
+  const c = spawn(process.execPath, [path.join(ROOT, 'scripts/start-windows.mjs')], { env: { ...process.env, PERMASCAPE_LAUNCH_QUIET: '1', PERMASCAPE_PORT: String(port), PERMASCAPE_DATA: data, PERMASCAPE_LOGDIR: logs } });
+  let out = '';
+  c.stdout.on('data', (d) => (out += d)); c.stderr.on('data', (d) => (out += d));
+  c.on('exit', (code) => resolve({ code, out }));
+});
+
+test('the Windows launcher starts the server, reuses it, and refuses a stranger on the port', { timeout: 60000 }, async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ps-winlaunch-'));
+  const data = path.join(tmp, 'data'), logs = path.join(tmp, 'logs');
+  const port = await freePort();
+  let pid;
+  try {
+    const first = await runLauncher(port, data, logs);
+    assert.equal(first.code, 0, first.out);
+    const who = await (await fetch(`http://127.0.0.1:${port}/api/whoami`)).json();
+    pid = who.pid;
+    assert.equal(who.app, 'permascape-3d');
+    assert.equal(fs.realpathSync(who.data), fs.realpathSync(data), 'projects go where the launcher said');
+    assert.ok(fs.existsSync(path.join(logs, 'launcher.log')));
+    const again = await runLauncher(port, data, logs);
+    assert.equal(again.code, 0, again.out);
+    assert.equal((await (await fetch(`http://127.0.0.1:${port}/api/whoami`)).json()).pid, pid, 'the running server is reused, not doubled');
+  } finally { if (pid) try { process.kill(pid); } catch { /* gone */ } }
+
+  // something else answering on the port is never reused or driven
+  const port2 = await freePort();
+  const stranger = http.createServer((q, r) => { r.writeHead(200, { 'content-type': 'application/json' }); r.end('{"app":"someone-else"}'); }).listen(port2, '127.0.0.1');
+  try {
+    const r = await runLauncher(port2, data, logs);
+    assert.equal(r.code, 1);
+    assert.match(r.out, /different program/);
+  } finally { stranger.close(); fs.rmSync(tmp, { recursive: true, force: true }); }
 });

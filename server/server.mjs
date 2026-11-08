@@ -81,7 +81,7 @@ async function api(req, res, url) {
   if (p === '/api/surroundings') return send(res, 200, await sources.surroundings(num(q.get('lat'), -90, 90), num(q.get('lon'), -180, 180), num(q.get('size'), 20, 5000)));
   if (p === '/api/forecast') return send(res, 200, await sources.forecast(num(q.get('lat'), -90, 90), num(q.get('lon'), -180, 180)));
 
-  if (p === '/api/ai/status') return send(res, 200, { available: !!claudeBinary(), engine: 'Claude Code on this Mac' });
+  if (p === '/api/ai/status') return send(res, 200, { available: !!claudeBinary(), engine: 'Claude Code on this computer' });
   if (p === '/api/ai' && req.method === 'POST') {
     const body = JSON.parse(await readBody(req, 2 * 1024 * 1024));
     const mode = ['design', 'critic', 'brief', 'proposal'].includes(body.mode) ? body.mode : 'ask';

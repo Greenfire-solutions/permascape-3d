@@ -48,7 +48,6 @@ const GUILD_ROLES: { role: string; pick: (s: Species) => boolean; count: number;
  */
 export type FitFn = (id: string) => 'good' | 'possible' | 'no';
 const rank = (fit: FitFn | undefined, sp: Species) => (fit ? { good: 0, possible: 1, no: 2 }[fit(sp.id)] : 0);
-const usable = (fit: FitFn | undefined, sp: Species) => !fit || fit(sp.id) !== 'no';
 
 /** Where the site is, so automatic picks can skip plants that are weeds there. */
 export interface Loc { lat?: number | null; lon?: number | null }
@@ -132,7 +131,7 @@ export function alongLine(points: [number, number][], spacing: number): [number,
  */
 export function hedgeSpecies(zone: number | null, fit?: FitFn, presentIds: Iterable<string> = [], loc?: Loc) {
   const avoid = conflictsWith(presentIds);
-  const ok = (s: Species) => s.life === 'perennial' && suits(s, zone, fit) && !avoid.has(s.id) && !INVASIVE_HEDGE.includes(s.id) && !weedHere(s.id, loc) && !CONFLICTS.some((c) => c.host === s.id);
+  const ok = (s: Species) => s.life === 'perennial' && suits(s, zone, fit) && !avoid.has(s.id) && !INVASIVE_HEDGE.includes(s.id) && !weedHere(s.id, loc) && s.id !== 'redcedar'; // red cedar would rust any apples planted later
   const wb = LIBRARY.filter((s) => ok(s) && has(s, 'windbreak', 'hedge'));
   const tall = wb.filter((s) => s.heightM >= 5).sort((a, b) => rank(fit, a) - rank(fit, b) || Number(has(b, 'nitrogen')) - Number(has(a, 'nitrogen')) || b.functions.length - a.functions.length);
   const low = LIBRARY.filter((s) => ok(s) && s.layer === 'shrub' && (has(s, 'windbreak', 'hedge', 'nitrogen', 'wildlife') || s.category === 'berry'))

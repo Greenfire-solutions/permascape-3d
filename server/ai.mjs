@@ -1,4 +1,4 @@
-// The AI designer. Every answer comes from Claude Code running headless on this Mac
+// The AI designer. Every answer comes from Claude Code running headless on this computer
 // (`claude -p`) on the owner's own Claude sign-in: no API key is read, and ANTHROPIC_API_KEY is
 // removed from the child so a stray key can never start per-token billing.
 //
@@ -10,12 +10,20 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const CANDIDATES = [process.env.CLAUDE_BIN, path.join(os.homedir(), '.local/bin/claude'), '/usr/local/bin/claude', '/opt/homebrew/bin/claude'].filter(Boolean);
+const WIN = process.platform === 'win32';
+// Windows: the native installer puts claude.exe in %USERPROFILE%\.local\bin; an npm install leaves a
+// claude.cmd shim, which is run through its cli.js with Node so no shell has to quote the arguments.
+const CANDIDATES = (WIN
+  ? [process.env.CLAUDE_BIN, path.join(os.homedir(), '.local', 'bin', 'claude.exe'), path.join(process.env.LOCALAPPDATA || '', 'Programs', 'claude', 'claude.exe'),
+    path.join(process.env.APPDATA || '', 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js')]
+  : [process.env.CLAUDE_BIN, path.join(os.homedir(), '.local/bin/claude'), '/usr/local/bin/claude', '/opt/homebrew/bin/claude']).filter(Boolean);
 
 export function claudeBinary() {
-  for (const c of CANDIDATES) { try { fs.accessSync(c, fs.constants.X_OK); return c; } catch { /* next */ } }
+  for (const c of CANDIDATES) { try { fs.accessSync(c, WIN ? fs.constants.F_OK : fs.constants.X_OK); return c; } catch { /* next */ } }
   return null;
 }
+/** The program and leading arguments that start Claude Code. */
+const claudeCommand = (bin) => (bin.endsWith('.js') ? [process.execPath, [bin]] : [bin, []]);
 
 const ACTION = {
   type: 'object',
@@ -149,7 +157,7 @@ const SCHEMAS = { design: SCHEMA, ask: SCHEMA, critic: CRITIC_SCHEMA, brief: BRI
 
 export async function askClaude({ mode, question, context, model, proposal }) {
   const bin = claudeBinary();
-  if (!bin) throw Object.assign(new Error('Claude Code is not installed on this Mac. Install it and sign in once by typing claude in Terminal, then try again.'), { status: 503 });
+  if (!bin) throw Object.assign(new Error(`Claude Code is not installed on this computer. Install it from claude.ai/download and sign in once by typing claude in ${WIN ? 'a Command Prompt' : 'Terminal'}, then try again.`), { status: 503 });
   if (running >= MAX_PARALLEL) throw Object.assign(new Error('Permie is already working on two requests. Try again in a minute.'), { status: 429 });
   running++;
   const started = Date.now();
@@ -164,7 +172,8 @@ export async function askClaude({ mode, question, context, model, proposal }) {
     delete env.ANTHROPIC_API_KEY;
     delete env.CLAUDECODE;
     const out = await new Promise((resolve, reject) => {
-      const child = spawn(bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+      const [cmd, pre] = claudeCommand(bin);
+      const child = spawn(cmd, [...pre, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
       let stdout = '', stderr = '';
       const timer = setTimeout(() => { child.kill('SIGTERM'); reject(Object.assign(new Error('Permie took too long to answer. Try again, or ask something narrower.'), { status: 504 })); }, 8 * 60_000);
       child.stdout.on('data', (d) => (stdout += d));
@@ -218,7 +227,7 @@ export const scrubDashes = (s) => String(s).replace(/\s*[—–]\s*/g, ', ').rep
 
 function friendly(text) {
   const t = String(text || '').trim();
-  if (/not logged in|login|authenticat|sign in/i.test(t)) return 'Claude Code is not signed in on this Mac. Open Terminal, type claude, sign in once, then try again.';
+  if (/not logged in|login|authenticat|sign in/i.test(t)) return `Claude Code is not signed in on this computer. Open ${WIN ? 'a Command Prompt' : 'Terminal'}, type claude, sign in once, then try again.`;
   if (/rate.?limit|usage limit|quota|too many requests|\b429\b/i.test(t)) return 'Your Claude plan has hit its usage limit for now. Try again later.';
   if (/^\s*[{[]/.test(t) || /JSON|position \d+|Cannot read properties/i.test(t)) return 'Permie answered in a form the app could not read. Try again.';
   return `Permie could not answer: ${t.slice(0, 200) || 'no reply'}`;

@@ -22,6 +22,8 @@ FRESH="${SETUP_FRESH:-0}"
 NODE_VERSION="v22.23.4"
 NODE_SHA_x64="efcc2b0db6f94bf53eddb038fe2b370277a042bd29e4f19b8f8e23598795b819"
 NODE_SHA_arm64="c9e1dbc748b33ed2d14f42445191ecaf14c56259c7a9a26d0042c49ec2b66428"
+# The Windows download (scripts/package.sh win) ships this zip's node.exe.
+NODE_SHA_winx64="cbc74b5e0982c9dbb41525fd8fb5dcd32fbee237863f7829072f4639a1ce5f20"
 
 say() { printf '%s\n' "$*" >&2; }
 [ "$(uname -s)" = "Darwin" ] || { say "Permascape 3D runs on a Mac."; exit 2; }

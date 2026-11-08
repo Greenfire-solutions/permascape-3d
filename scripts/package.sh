@@ -4,12 +4,13 @@
 #  double-clicks, with Node.js, the one server package and the built app
 #  inside, so nothing has to be installed and npm never runs on their Mac.
 #
-#    scripts/package.sh            both Macs (Intel and Apple Silicon)
-#    scripts/package.sh arm64      one of them (x64 for Intel)
+#    scripts/package.sh            both Macs (Intel and Apple Silicon) and Windows
+#    scripts/package.sh arm64      one of them (x64 for Intel, win for Windows)
 #
 #  Output, next to the built app in dist/:
 #    Permascape 3D (Intel Mac).zip
 #    Permascape 3D (Apple Silicon).zip
+#    Permascape 3D (Windows).zip     node.exe inside; "Start Permascape.cmd" runs scripts/start-windows.mjs
 #    SHA256SUMS
 #
 #  Works from a bare `git archive` of the repo (no node_modules; the store's
@@ -28,7 +29,7 @@ pin() { sed -n "s/^$1=\"\(.*\)\"/\1/p" "$ROOT/scripts/setup.sh"; }
 NODE_VERSION="$(pin NODE_VERSION)"
 OUT="$ROOT/dist"; mkdir -p "$OUT"
 CACHE="$HOME/Library/Caches/permascape-package"; mkdir -p "$CACHE"
-ARCHES=("${1:-x64}"); [ $# -eq 0 ] && ARCHES=(x64 arm64)
+ARCHES=("${1:-x64}"); [ $# -eq 0 ] && ARCHES=(x64 arm64 win)
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 NAME="Permascape 3D"
 NPM_BIN="$(command -v npm || true)"
@@ -54,15 +55,66 @@ NATIVE="$(find "$WORK/deps/node_modules" \( -name '*.node' -o -name 'binding.gyp
 # What ships: the built app, the server, the launchers, and the source to make it your own.
 SHIP=("READ ME FIRST.txt" CLAUDE.md README.md package.json package-lock.json index.html vite.config.ts
       tailwind.config.js postcss.config.js tsconfig.json src server test
-      scripts/setup.sh scripts/start-permascape.sh scripts/source-hash.mjs scripts/package.sh .gitignore
+      scripts/setup.sh scripts/start-permascape.sh scripts/start-windows.mjs scripts/source-hash.mjs scripts/package.sh .gitignore
       "Start Permascape.app" "Start Permascape.command")
 JUNK=(--exclude '.DS_Store' --exclude '*.log' --exclude '.env*' --exclude 'node_modules')
 
 SUMS="$CACHE/SHASUMS256-$NODE_VERSION.txt"
 [ -f "$SUMS" ] || /usr/bin/curl -fsSL "https://nodejs.org/dist/$NODE_VERSION/SHASUMS256.txt" -o "$SUMS"
 
+# What the Windows zip carries instead of the Mac launchers and READ ME.
+WIN_SHIP=(CLAUDE.md README.md package.json package-lock.json index.html vite.config.ts
+      tailwind.config.js postcss.config.js tsconfig.json src server test
+      scripts/start-windows.mjs scripts/source-hash.mjs .gitignore "Start Permascape.cmd")
+
+# Nothing private or built-on-this-Mac may ride along (captured, never piped into grep -q under pipefail).
+guard() {
+  local DEST="$1" BAD LEAK HITS
+  BAD="$(find "$DEST" \( -name '.env*' -o -name '*.log' -o -name '.git' -o -name 'data' -o -name 'profile.json' -o -name 'Showcase Film' \) -not -path '*/runtime/node/*' -print)"
+  [ -z "$BAD" ] || { echo "Refusing: private files are in the package:" >&2; echo "$BAD" >&2; exit 1; }
+  LEAK="$(grep -rlF "$HOME/" "$DEST" --exclude-dir=runtime 2>/dev/null || true)"
+  [ -z "$LEAK" ] || { echo "Refusing: these files name a folder on this Mac:" >&2; echo "$LEAK" >&2; exit 1; }
+  if [ -f "$ROOT/tools/private-words.txt" ]; then
+    HITS="$(grep -rliwF -f "$ROOT/tools/private-words.txt" "$DEST" --exclude-dir=runtime --exclude-dir=node_modules --exclude='*.icns' --exclude='*.woff2' 2>/dev/null || true)"
+    [ -z "$HITS" ] || { echo "Refusing: these files name something private:" >&2; echo "$HITS" >&2; exit 1; }
+  fi
+}
+
 rm -f "$OUT/SHA256SUMS"
 for ARCH in "${ARCHES[@]}"; do
+  if [ "$ARCH" = win ]; then
+    echo "== Windows (x64; also runs on Windows on Arm)"
+    DEST="$WORK/win/$NAME"; mkdir -p "$DEST"
+    for item in "${WIN_SHIP[@]}"; do
+      [ -e "$ROOT/$item" ] || { echo "Missing from the app folder: $item" >&2; exit 1; }
+      /usr/bin/rsync -aR "${JUNK[@]}" "$ROOT/./$item" "$DEST/"
+    done
+    cp "$ROOT/READ ME FIRST (Windows).txt" "$DEST/READ ME FIRST.txt"
+    /usr/bin/rsync -a --exclude '*.zip' --exclude 'SHA256SUMS' "$B/dist/" "$DEST/dist/"
+    /usr/bin/rsync -a "$WORK/deps/node_modules/" "$DEST/node_modules/"
+    WZIP="node-$NODE_VERSION-win-x64.zip"
+    [ -f "$CACHE/$WZIP" ] || /usr/bin/curl -fsSL --retry 3 "https://nodejs.org/dist/$NODE_VERSION/$WZIP" -o "$CACHE/$WZIP"
+    ( cd "$CACHE" && grep " $WZIP\$" "$SUMS" | /usr/bin/shasum -a 256 -c - >/dev/null ) \
+      || { rm -f "$CACHE/$WZIP"; echo "Node for Windows failed its checksum" >&2; exit 1; }
+    [ "$(/usr/bin/shasum -a 256 "$CACHE/$WZIP" | cut -d' ' -f1)" = "$(pin NODE_SHA_winx64)" ] \
+      || { echo "Node for Windows does not match the pin in setup.sh" >&2; exit 1; }
+    mkdir -p "$WORK/winnode" "$DEST/runtime/node"
+    /usr/bin/unzip -q -o "$CACHE/$WZIP" -d "$WORK/winnode"
+    P="$WORK/winnode/node-$NODE_VERSION-win-x64"
+    cp "$P/node.exe" "$P/npm.cmd" "$P/npx.cmd" "$P/LICENSE" "$DEST/runtime/node/"
+    /usr/bin/rsync -a "$P/node_modules/npm" "$DEST/runtime/node/node_modules/"
+    [[ "$(/usr/bin/file -b "$DEST/runtime/node/node.exe")" == *"PE32+"*"x86-64"* ]] || { echo "node.exe is not a 64-bit Windows program" >&2; exit 1; }
+    echo win-x64 > "$DEST/runtime/ARCH"
+    printf 'node %s\npermascape-3d %s\n' "$NODE_VERSION" "$VER" > "$DEST/runtime/VERSIONS"
+    guard "$DEST"
+    # Windows needs Windows line endings in the launcher
+    /usr/bin/grep -q $'\r' "$DEST/Start Permascape.cmd" || { echo "Start Permascape.cmd lost its Windows line endings" >&2; exit 1; }
+    ZIP="$OUT/$NAME (Windows).zip"; rm -f "$ZIP"
+    # a plain zip: no __MACOSX folder, nothing a Windows user has to wonder about
+    ( cd "$WORK/win" && /usr/bin/zip -qrX "$ZIP" "$NAME" )
+    echo "   $(du -h "$ZIP" | cut -f1)  $ZIP"
+    continue
+  fi
   case "$ARCH" in x64) LABEL="Intel Mac";; arm64) LABEL="Apple Silicon";; *) echo "unknown arch $ARCH" >&2; exit 2;; esac
   echo "== $LABEL ($ARCH)"
   DEST="$WORK/$ARCH/$NAME"; mkdir -p "$DEST"
@@ -89,16 +141,8 @@ for ARCH in "${ARCHES[@]}"; do
   # Not "runtime/NODE": macOS folders are case-insensitive and that collides with runtime/node.
   printf 'node %s\npermascape-3d %s\n' "$NODE_VERSION" "$VER" > "$DEST/runtime/VERSIONS"
 
-  # Nothing private or built-on-this-Mac may ride along (captured, never piped into grep -q under pipefail).
-  BAD="$(find "$DEST" \( -name '.env*' -o -name '*.log' -o -name '.git' -o -name 'data' -o -name 'profile.json' -o -name 'Showcase Film' \) -not -path '*/runtime/node/*' -print)"
-  [ -z "$BAD" ] || { echo "Refusing: private files are in the package:" >&2; echo "$BAD" >&2; exit 1; }
-  LEAK="$(grep -rlF "$HOME/" "$DEST" --exclude-dir=runtime 2>/dev/null || true)"
-  [ -z "$LEAK" ] || { echo "Refusing: these files name a folder on this Mac:" >&2; echo "$LEAK" >&2; exit 1; }
   # Words that must never ship can be listed in tools/private-words.txt (kept out of git).
-  if [ -f "$ROOT/tools/private-words.txt" ]; then
-    HITS="$(grep -rliwF -f "$ROOT/tools/private-words.txt" "$DEST" --exclude-dir=runtime --exclude-dir=node_modules --exclude='*.icns' --exclude='*.woff2' 2>/dev/null || true)"
-    [ -z "$HITS" ] || { echo "Refusing: these files name something private:" >&2; echo "$HITS" >&2; exit 1; }
-  fi
+  guard "$DEST"
 
   chmod +x "$DEST/Start Permascape.command" "$DEST/scripts/"*.sh "$DEST/Start Permascape.app/Contents/MacOS/"*
   # The icon's seal must survive the copy (git does not keep it): verify it, re-seal if needed.

@@ -138,7 +138,7 @@ export default function Permie({ available, turns, goals, onGoals, buildContext,
       </div>
 
       <div ref={scroller} className="flex-1 overflow-y-auto scroll-thin px-5 py-4 space-y-4">
-        {available === false && <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-3 text-xs text-amber-100">Permie runs on Claude Code on this Mac and it is not installed. Install Claude Code and sign in once by typing claude in Terminal.</div>}
+        {available === false && <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-3 text-xs text-amber-100">Permie runs on Claude Code on this computer and it is not installed. Install Claude Code from claude.ai/download and sign in once by typing claude in Terminal (Mac) or a Command Prompt (Windows).</div>}
         {turns.length === 0 && !busy && (
           <div className="text-sm text-zinc-300 space-y-2 leading-relaxed">
             <p>I can see your slope, water flow, sun, climate, frost dates, soil and everything you have placed.</p>
