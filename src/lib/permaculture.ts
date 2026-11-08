@@ -3,12 +3,13 @@
 // list of proposed changes (from the AI designer or a review fix) to the design in one step.
 // Pure functions: everything here runs in node for the tests.
 import type { AiAction, DesignState, Feature, Site, SiteObject, Animal } from './types.ts';
-import { LIBRARY, LIBRARY_BY_ID } from './library.ts';
+import { LIBRARY, LIBRARY_BY_ID, hasWarmLimit } from './library.ts';
+import { advise, buildSiteClimate } from './advisor.ts';
 import type { Species, Layer } from './library.ts';
 import type { Grid } from './terrain.ts';
 import { heightAt, contourThrough, applyEarthwork, digPond, polygonArea, polylineLength, pointInPolygon, slopeGrid, slopeAspectAt } from './terrain.ts';
 import { sunPosition } from './sun.ts';
-import { plantChecks, sitingChecks, CONFLICTS, groundProblem, lineSlope, layerStatus } from './checks.ts';
+import { plantChecks, sitingChecks, CONFLICTS, groundProblem, lineSlope, layerStatus, INVASIVE } from './checks.ts';
 import { isHouse } from './estimate.ts';
 
 /** The home the zones and sectors radiate from: the house by name, else a house-sized dwelling, else the first building. */
@@ -24,7 +25,9 @@ export function effectiveZone(site: Pick<Site, 'climate' | 'overrides'> | null |
   return site?.climate?.zone?.zone ?? null;
 }
 
-const fits = (sp: Species, zone: number | null) => zone == null || (zone >= sp.zoneMin && zone <= sp.zoneMax);
+const fits = (sp: Species, zone: number | null) => zone == null || (zone >= sp.zoneMin && (zone <= sp.zoneMax || !hasWarmLimit(sp)));
+/** With the advisor's verdict for this exact climate, trust it over the bare zone number. */
+const suits = (sp: Species, zone: number | null, fit?: FitFn) => (fit ? fit(sp.id) !== 'no' : fits(sp, zone));
 const has = (sp: Species, ...fn: string[]) => sp.functions.some((f) => fn.some((k) => f.toLowerCase().includes(k)));
 
 // ---------------------------------------------------------------- guilds
@@ -36,7 +39,7 @@ const GUILD_ROLES: { role: string; pick: (s: Species) => boolean; count: number;
   { role: 'Nutrient miner', pick: (s) => has(s, 'dynamic accumulator') && s.life === 'perennial', count: 2, ring: 0.6 },
   { role: 'Pollinator and insect attractor', pick: (s) => has(s, 'pollinator', 'beneficial', 'bee forage') && ['herb', 'groundcover', 'shrub'].includes(s.layer) && s.life === 'perennial' && s.heightM <= 2, count: 2, ring: 0.75 },
   { role: 'Pest confuser', pick: (s) => has(s, 'pest confuser') && s.life === 'perennial', count: 2, ring: 0.45 },
-  { role: 'Living mulch', pick: (s) => s.layer === 'groundcover' && s.life === 'perennial', count: 2, ring: 0.85 },
+  { role: 'Living mulch', pick: (s) => s.layer === 'groundcover' && s.life === 'perennial' && s.category !== 'pasture', count: 2, ring: 0.85 },
 ];
 
 /**
@@ -46,6 +49,20 @@ const GUILD_ROLES: { role: string; pick: (s: Species) => boolean; count: number;
 export type FitFn = (id: string) => 'good' | 'possible' | 'no';
 const rank = (fit: FitFn | undefined, sp: Species) => (fit ? { good: 0, possible: 1, no: 2 }[fit(sp.id)] : 0);
 const usable = (fit: FitFn | undefined, sp: Species) => !fit || fit(sp.id) !== 'no';
+
+/** Where the site is, so automatic picks can skip plants that are weeds there. */
+export interface Loc { lat?: number | null; lon?: number | null }
+/**
+ * Never picked automatically: a plant the review would then warn about as a weed at this site.
+ * Plants that spread everywhere (mint, running bamboo) are always skipped; regional weeds are
+ * skipped where they are listed, and everywhere when the location is unknown.
+ */
+export const weedHere = (id: string, loc?: Loc) => {
+  const v = INVASIVE[id];
+  if (!v) return false;
+  if (!v.where || loc?.lat == null || loc?.lon == null) return true;
+  return v.where(loc.lat, loc.lon);
+};
 
 /** Plants that would host a disease of, or poison, something already in the design. */
 export function conflictsWith(presentIds: Iterable<string>) {
@@ -58,12 +75,12 @@ export function conflictsWith(presentIds: Iterable<string>) {
 }
 
 /** Support species that fit this site's zone, best match per role. */
-export function guildSpecies(center: Species, zone: number | null, fit?: FitFn) {
+export function guildSpecies(center: Species, zone: number | null, fit?: FitFn, loc?: Loc) {
   const out: { role: string; species: Species; count: number; ring: number }[] = [];
   const used = new Set<string>([center.id]);
   const avoid = conflictsWith([center.id]);
   for (const r of GUILD_ROLES) {
-    const pool = LIBRARY.filter((s) => r.pick(s) && fits(s, zone) && usable(fit, s) && !avoid.has(s.id) && !used.has(s.id) && s.heightM < center.heightM * 0.8)
+    const pool = LIBRARY.filter((s) => r.pick(s) && suits(s, zone, fit) && !weedHere(s.id, loc) && !avoid.has(s.id) && !used.has(s.id) && s.heightM < center.heightM * 0.8)
       .sort((a, b) => rank(fit, a) - rank(fit, b) || b.functions.length - a.functions.length || a.heightM - b.heightM);
     if (!pool.length) continue;
     used.add(pool[0].id);
@@ -73,13 +90,13 @@ export function guildSpecies(center: Species, zone: number | null, fit?: FitFn) 
 }
 
 /** A tree with its support plants placed in rings around the drip line. */
-export function buildGuild(centerId: string, x: number, y: number, zone: number | null, fit?: FitFn): GuildMember[] {
+export function buildGuild(centerId: string, x: number, y: number, zone: number | null, fit?: FitFn, loc?: Loc): GuildMember[] {
   const center = LIBRARY_BY_ID[centerId];
   if (!center) return [];
   const R = Math.max(1.2, center.spreadM / 2);
   const members: GuildMember[] = [{ role: 'Centre', species: center, x, y }];
   let k = 0;
-  const roles = guildSpecies(center, zone, fit);
+  const roles = guildSpecies(center, zone, fit, loc);
   const total = roles.reduce((s, r) => s + r.count, 0);
   for (const r of roles) {
     for (let i = 0; i < r.count; i++, k++) {
@@ -113,9 +130,9 @@ export function alongLine(points: [number, number][], spacing: number): [number,
  * that suit the climate and soil come before ones that only survive, and anything that would
  * host a disease of what is already planted (red cedar beside apples) is left out.
  */
-export function hedgeSpecies(zone: number | null, fit?: FitFn, presentIds: Iterable<string> = []) {
+export function hedgeSpecies(zone: number | null, fit?: FitFn, presentIds: Iterable<string> = [], loc?: Loc) {
   const avoid = conflictsWith(presentIds);
-  const ok = (s: Species) => s.life === 'perennial' && fits(s, zone) && usable(fit, s) && !avoid.has(s.id) && !INVASIVE_HEDGE.includes(s.id);
+  const ok = (s: Species) => s.life === 'perennial' && suits(s, zone, fit) && !avoid.has(s.id) && !INVASIVE_HEDGE.includes(s.id) && !weedHere(s.id, loc) && !CONFLICTS.some((c) => c.host === s.id);
   const wb = LIBRARY.filter((s) => ok(s) && has(s, 'windbreak', 'hedge'));
   const tall = wb.filter((s) => s.heightM >= 5).sort((a, b) => rank(fit, a) - rank(fit, b) || Number(has(b, 'nitrogen')) - Number(has(a, 'nitrogen')) || b.functions.length - a.functions.length);
   const low = LIBRARY.filter((s) => ok(s) && s.layer === 'shrub' && (has(s, 'windbreak', 'hedge', 'nitrogen', 'wildlife') || s.category === 'berry'))
@@ -126,8 +143,8 @@ export function hedgeSpecies(zone: number | null, fit?: FitFn, presentIds: Itera
 const INVASIVE_HEDGE = ['timberbamboo', 'seabuckthorn', 'peashrub', 'blacklocust'];
 
 /** A hedgerow: tall trees on the line, shrubs staggered a metre and a half to one side. */
-export function buildHedge(points: [number, number][], zone: number | null, tallId?: string, lowId?: string, fit?: FitFn, presentIds: Iterable<string> = []) {
-  const picks = hedgeSpecies(zone, fit, presentIds);
+export function buildHedge(points: [number, number][], zone: number | null, tallId?: string, lowId?: string, fit?: FitFn, presentIds: Iterable<string> = [], loc?: Loc) {
+  const picks = hedgeSpecies(zone, fit, presentIds, loc);
   const tall = (tallId && LIBRARY_BY_ID[tallId]) || picks.tall;
   const low = (lowId && LIBRARY_BY_ID[lowId]) || picks.low;
   const out: { species: Species; x: number; y: number }[] = [];
@@ -306,7 +323,7 @@ export function waterBudget(site: Site, objects: SiteObject[], features: Feature
 export type FixId = 'guilds' | 'tank' | 'zones' | 'swales' | 'compost' | 'pollinators' | 'nfixers' | 'misfits' | 'windbreak' | 'sectors' | 'house' | 'select' | 'read' | 'plants';
 export interface Finding { level: 'good' | 'tip' | 'warn'; text: string; fix?: FixId; fixLabel?: string; ids?: string[] }
 /** `scored` is false when nothing in the area could be judged yet: its score is then left out of the overall. */
-export interface ReviewArea { id: string; name: string; score: number; scored: boolean; findings: Finding[] }
+export interface ReviewArea { id: string; name: string; score: number; scored: boolean; findings: Finding[]; notChecked?: number }
 
 export interface ReviewInput {
   site: Site; objects: SiteObject[]; features: Feature[]; zone: number | null;
@@ -398,12 +415,17 @@ export function reviewDesign(d: ReviewInput) {
   ]);
 
   // climate fit
-  const misfits = plants.filter((p) => { const s = LIBRARY_BY_ID[p.species || '']; return s && !fits(s, d.zone); });
+  let climateFit: FitFn | undefined;
+  try {
+    const sc = d.site.lat != null && d.site.climate ? buildSiteClimate(d.site.climate, d.site.lat, d.site.overrides) : null;
+    if (sc) { const memo: Record<string, 'good' | 'possible' | 'no'> = {}; climateFit = (id) => (memo[id] ??= LIBRARY_BY_ID[id] ? advise(LIBRARY_BY_ID[id], sc, null, LIBRARY_BY_ID[id].pz.find((z) => z > 0) ?? 2, d.site.soil).status : 'possible'); }
+  } catch { climateFit = undefined; }
+  const misfits = plants.filter((p) => { const s = LIBRARY_BY_ID[p.species || '']; return s && !suits(s, d.zone, climateFit); });
   const sectors = d.features.filter((f) => f.kind === 'sector');
   const hedges = sp.filter((s) => has(s, 'windbreak', 'hedge')).length;
   area('climate', 'Climate and sectors', [
-    { na: plants.length === 0, ok: misfits.length === 0, w: 3, good: d.zone != null ? `Every plant suits hardiness zone ${d.zone}.` : 'Set a real address to check plants against the climate.', bad: { level: 'warn', text: `${misfits.length} plant${misfits.length > 1 ? 's' : ''} will not survive zone ${d.zone}: ${[...new Set(misfits.map((m) => LIBRARY_BY_ID[m.species!]?.name))].slice(0, 4).join(', ')}.`, fix: 'misfits', fixLabel: 'Select the first one' } },
-    { ok: sectors.length > 0, w: 2, good: 'Sectors are mapped: sun, wind and outside energies.', bad: { level: 'tip', text: 'Map the sectors: where sun, wind, fire and views come from decides where everything goes.', fix: 'sectors', fixLabel: 'Add sun and wind sectors' } },
+    { na: plants.length === 0, ok: misfits.length === 0, w: 3, good: d.zone != null ? `Every plant suits this climate (zone ${d.zone}).` : 'Set a real address to check plants against the climate.', bad: { level: 'warn', text: `${misfits.length} plant${misfits.length > 1 ? 's' : ''} ${misfits.length > 1 ? 'do' : 'does'} not suit this climate${d.zone != null ? ` (zone ${d.zone})` : ''}: ${[...new Set(misfits.map((m) => LIBRARY_BY_ID[m.species!]?.name))].slice(0, 4).join(', ')}.`, fix: 'misfits', fixLabel: 'Select the first one' } },
+    { ok: sectors.length > 0, w: 2, good: (() => { const k = new Set(sectors.map((f) => f.sector || '')); const has = [k.has('sun-summer') || k.has('sun-winter') ? 'sun' : '', k.has('wind') || k.has('cold-wind') ? 'wind' : '', k.has('fire') ? 'fire' : ''].filter(Boolean); return `Sectors are mapped: ${has.length ? has.join(', ') : 'outside energies'}.${!has.includes('wind') ? ' Wind is not mapped yet: add it from Analyze or draw it by hand.' : ''}`; })(), bad: { level: 'tip', text: 'Map the sectors: where sun, wind, fire and views come from decides where everything goes.', fix: 'sectors', fixLabel: 'Add sun and wind sectors' } },
     { ok: d.site.size < 40 || hedges >= 3, w: 1, good: 'Windbreak plants shelter the site.', bad: { level: 'tip', text: 'No windbreak yet. A hedgerow on the windward side warms the whole site and cuts water loss.', fix: 'windbreak', fixLabel: 'Use the hedgerow tool' } },
   ]);
 
@@ -425,7 +447,9 @@ export function reviewDesign(d: ReviewInput) {
     ? [{ level: 'tip', text: 'Not checked against flood, stream, wetland, soil or road maps: a sandbox has no public maps.' }]
     : !s
       ? [{ level: 'tip', text: 'Not checked yet: the flood, stream, wetland, soil and road maps are not loaded for this land, so this area is not scored. Load them in Site before giving this review to a client.', fix: 'read', fixLabel: 'Load them in Site' }]
-      : mapLayers.filter((l) => !l.loaded).map((l) => ({ level: 'tip', text: `Not checked: ${l.name} did not load${/answered (\d+)/.test(l.error || '') ? ` (the service answered with error ${(l.error || '').match(/answered (\d+)/)![1]})` : l.error && l.error !== 'not loaded' ? ' (the service did not answer in time)' : ''}, so nothing was checked against it and it does not count in the score. Try again in Site before giving this review to a client.`, fix: 'read', fixLabel: 'Try again in Site' } as Finding));
+      : mapLayers.filter((l) => !l.loaded && !l.usOnly).map((l) => ({ level: 'tip', text: `Not checked: ${l.name} did not load${/answered (\d+)/.test(l.error || '') ? ` (the service answered with error ${(l.error || '').match(/answered (\d+)/)![1]})` : l.error && l.error !== 'not loaded' ? ' (the service did not answer in time)' : ''}, so nothing was checked against it and it does not count in the score. Try again in Site before giving this review to a client.`, fix: 'read', fixLabel: 'Try again in Site' } as Finding));
+  const usOnly = mapLayers.filter((l) => l.usOnly);
+  if (s && usOnly.length) notChecked.push({ level: 'tip', text: `Not available here: ${usOnly.map((l) => l.name).join(', ').replace(/, ([^,]*)$/, ' and $1')} cover the United States only, so nothing was checked against them and they do not count in the score. Check your local council or government flood, wetland and soil maps before building near water.` });
   const viaNotes: Finding[] = mapLayers.filter((l) => l.loaded && l.note).map((l) => ({ level: 'tip', text: `Streams: ${l.note}. Small creeks may be missing.` }));
   const GOOD: Record<string, string> = {
     flood: 'Checked against the FEMA flood map: nothing proposed is built in the mapped flood area.',
@@ -443,6 +467,8 @@ export function reviewDesign(d: ReviewInput) {
   ], [...notChecked, ...viaNotes, ...siting.map(asFinding)], penaltyOf(siting.filter((c) => c.level === 'tip')) / 2);
   const sit = areas[areas.length - 1];
   sit.findings = sit.findings.filter((f) => f.text);
+  // the score covers only the maps that loaded: say how many did not, next to the number
+  sit.notChecked = d.site.lat == null ? 0 : !s ? 5 : mapLayers.filter((l) => !l.loaded && !l.usOnly).length;
 
   const scored = areas.filter((a) => a.scored);
   const overall = scored.length ? Math.round(scored.reduce((t, a) => t + a.score, 0) / scored.length) : 0;
@@ -488,13 +514,13 @@ export interface ApplyResult { state: DesignState; applied: number[]; notes: str
  * Every coordinate is clamped onto the site, every species checked against the library;
  * a change that cannot be made is skipped with a note rather than half-made.
  */
-export function applyActions(state: DesignState, g: Grid, actions: AiAction[], indices: number[], opts: { zone: number | null; day: string; id: () => string; fit?: FitFn }): ApplyResult {
+export function applyActions(state: DesignState, g: Grid, actions: AiAction[], indices: number[], opts: { zone: number | null; day: string; id: () => string; fit?: FitFn; loc?: Loc }): ApplyResult {
   let heights = state.heights;
   const objects = [...state.objects];
   const features = [...state.features];
   const applied: number[] = [];
   const notes: string[] = [];
-  const half = g.size / 2 - 0.5;
+  const half = g.size / 2 - Math.min(2, g.size / 20); // 2 m inside the edge, as Permie is told
   const clampP = (x: number, y: number): [number, number] => [Math.max(-half, Math.min(half, Number(x) || 0)), Math.max(-half, Math.min(half, Number(y) || 0))];
   const pts = (p?: [number, number][]) => (p || []).filter((q) => Array.isArray(q) && q.length >= 2).map((q) => clampP(q[0], q[1]));
   const grid = () => ({ heights, n: g.n, size: g.size });
@@ -519,13 +545,13 @@ export function applyActions(state: DesignState, g: Grid, actions: AiAction[], i
         break;
       case 'guild': {
         if (!sp) { notes.push(`Skipped "${a.label}": unknown tree ${a.species}.`); continue; }
-        for (const m of buildGuild(sp.id, x, y, opts.zone, opts.fit)) { const [mx, my] = clampP(m.x, m.y); addPlant(m.species, mx, my, m.role === 'Centre' ? a.why : `${m.role} for the guild`); }
+        for (const m of buildGuild(sp.id, x, y, opts.zone, opts.fit, opts.loc)) { const [mx, my] = clampP(m.x, m.y); addPlant(m.species, mx, my, m.role === 'Centre' ? a.why : `${m.role} for the guild`); }
         break;
       }
       case 'hedge': {
         const line = pts(a.points);
         if (line.length < 2) { notes.push(`Skipped "${a.label}": a hedge needs a line.`); continue; }
-        const h = buildHedge(line, opts.zone, sp?.id, undefined, opts.fit, objects.filter((o) => o.type === 'plant').map((o) => o.species || ''));
+        const h = buildHedge(line, opts.zone, sp?.id, undefined, opts.fit, objects.filter((o) => o.type === 'plant').map((o) => o.species || ''), opts.loc);
         for (const p of h.plants.slice(0, 150)) { const [px, py] = clampP(p.x, p.y); addPlant(p.species, px, py, 'hedgerow'); }
         break;
       }

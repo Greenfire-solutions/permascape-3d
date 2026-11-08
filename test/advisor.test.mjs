@@ -103,8 +103,9 @@ test('Nairobi: tropical highlands', () => {
 });
 
 test('Fairbanks, Alaska: short, cold summers', () => {
-  for (const id of ['haskap', 'saskatoon', 'currant', 'sourcherry', 'cabbage', 'potato', 'onion']) assert.notEqual(A('fairbanks', id).status, 'no', id);
-  for (const id of ['grape', 'peach', 'sweetcorn', 'pepper', 'garlic']) assert.equal(A('fairbanks', id).status, 'no', id);
+  // hardneck garlic overwinters under snow and mulch in Interior Alaska (UAF Extension grows it)
+  for (const id of ['haskap', 'saskatoon', 'currant', 'sourcherry', 'cabbage', 'potato', 'onion', 'garlic']) assert.notEqual(A('fairbanks', id).status, 'no', id);
+  for (const id of ['grape', 'peach', 'sweetcorn', 'pepper']) assert.equal(A('fairbanks', id).status, 'no', id);
   assert.match(A('fairbanks', 'apple').variety, /Cold-hardy/);
 });
 

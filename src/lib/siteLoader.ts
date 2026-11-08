@@ -27,7 +27,7 @@ export async function buildSiteProject(
   onStep('climate', 'run');
   onStep('soil', 'run');
   const [climate, soil] = await Promise.all([
-    fetchClimate(opts.lat, opts.lon).then((c) => { onStep('climate', 'ok', `${c.annualPrecipMm} mm a year, zone ${c.zone?.label ?? '?'}`); return c; })
+    fetchClimate(opts.lat, opts.lon).then((c) => { onStep('climate', 'ok', `${c.annualPrecipMm} mm a year, zone ${c.zoneOfficial?.label ?? c.zone?.label ?? '?'}`); return c; })
       .catch((e) => { onStep('climate', 'warn', `Not available: ${e.message}`); return null; }),
     fetchSoil(opts.lat, opts.lon).then((s) => { onStep('soil', s.available ? 'ok' : 'warn', s.available ? s.mapUnit : s.note); return s; })
       .catch((e) => { onStep('soil', 'warn', `Not available: ${e.message}`); return null; }),
@@ -47,9 +47,13 @@ export async function buildSiteProject(
     heights: t.heights,
     objects: [],
     features: [],
-    settings: { ...DEFAULT_SETTINGS, contourInterval: t.relief > 60 ? 5 : t.relief > 15 ? 2 : t.relief > 4 ? 1 : 0.5 },
+    // feet and acres in the US (and Liberia, Myanmar); metres and hectares everywhere else
+    settings: { ...DEFAULT_SETTINGS, units: usesImperial(opts.address, climate) ? 'imperial' : 'metric', contourInterval: t.relief > 60 ? 5 : t.relief > 15 ? 2 : t.relief > 4 ? 1 : 0.5 },
   };
 }
+
+export const usesImperial = (address: string, climate?: { zoneOfficial?: unknown } | null) =>
+  !!climate?.zoneOfficial || /(United States|USA|Liberia|Myanmar)\s*$/i.test(address || '');
 
 export function blankProject(name = 'Sandbox'): Project {
   const n = 128;

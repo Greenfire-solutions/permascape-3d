@@ -136,6 +136,7 @@ export default function StartDialog({ canClose, onClose, onOpenProject, onCreate
           {pick && !steps && (
             <div className="border border-emerald-400/25 bg-emerald-400/[0.05] rounded-2xl p-5 space-y-3 animate-rise">
               <div className="text-sm text-zinc-200 flex gap-2"><MapPin size={15} className="mt-0.5 text-emerald-400 shrink-0" /><span>{pick.label}<span className="block text-xs text-zinc-500 font-mono">{pick.lat.toFixed(5)}, {pick.lon.toFixed(5)}</span></span></div>
+              {['country', 'state', 'administrative', 'region', 'province', 'county', 'island', 'archipelago', 'continent'].includes(pick.kind || '') && <div className="text-xs text-amber-300" data-broad-place>That is a whole {pick.kind === 'administrative' ? 'region' : pick.kind}, so this lands in the middle of it. Type the full street address, or drag the preview onto your land.</div>}
               <SitePreview lat={pick.lat} lon={pick.lon} size={size} onMove={(lat, lon) => setPick({ ...pick, lat, lon })} />
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-3">

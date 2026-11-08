@@ -112,7 +112,8 @@ export function makeSources(cacheDir) {
     const mosaic = new Float32Array(W * H);
     const jobs = [];
     for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
-      const url = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${tx}/${ty}.png`;
+      const wx = ((tx % 2 ** z) + 2 ** z) % 2 ** z; // a site across the 180 degree line wraps to the other edge
+      const url = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${wx}/${ty}.png`;
       jobs.push(cachedBytes('terrarium', url, url).then((buf) => {
         const png = PNG.sync.read(buf);
         const ox = (tx - tx0) * 256, oy = (ty - ty0) * 256;
@@ -135,13 +136,16 @@ export function makeSources(cacheDir) {
 
   async function terrain(lat, lon, size, n, prefer = 'auto') {
     let result = null, note = '';
-    if (prefer !== 'tiles') {
-      try { result = await usgs3dep(lat, lon, size, n); } catch (e) { note = `USGS lidar unavailable (${e.message}). `; }
+    const us = prefer !== 'tiles' && await inUS(lat, lon);
+    if (us) {
+      try { result = await retry(() => usgs3dep(lat, lon, size, n)); } catch (e) { note = `USGS lidar unavailable (${e.message}). `; }
       if (!result && !note) note = 'Outside USGS lidar coverage. ';
-    }
+    } else if (prefer !== 'tiles') note = 'Outside the US: worldwide elevation tiles (SRTM and others), coarser than lidar. ';
     if (!result) result = await terrarium(lat, lon, size, n);
     let min = Infinity, max = -Infinity;
     for (const v of result.heights) { if (v < min) min = v; if (v > max) max = v; }
+    // a flat answer well above the sea is the data being too coarse here, not flat land
+    if (max - min < 0.5 && min > 5) note += 'The elevation data here is too coarse to show this site\'s slope; treat it as unknown and check on the ground. ';
     const rel = new Float32Array(result.heights.length);
     for (let i = 0; i < rel.length; i++) rel[i] = result.heights[i] - min;
     return {
@@ -152,9 +156,13 @@ export function makeSources(cacheDir) {
     };
   }
 
+  /** Esri's grey "Map data not yet available" tile, served where a zoom level has no imagery. */
+  const PLACEHOLDER_SHA1 = '1660d86a87f57ef0ff580822e0e62f0feb48deee';
   async function tile(z, x, y) {
     const url = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
-    return cachedBytes('imagery', url, url, 20000);
+    const buf = await cachedBytes('imagery', url, url, 20000);
+    if (buf.length < 4000 && crypto.createHash('sha1').update(buf).digest('hex') === PLACEHOLDER_SHA1) { const e = new Error('no imagery at this zoom'); e.status = 404; throw e; }
+    return buf;
   }
 
   // Free services hiccup now and then (timeouts, a 429). One quiet retry saves a site from
@@ -166,6 +174,20 @@ export function makeSources(cacheDir) {
       return fn();
     }
   };
+
+  /**
+   * Whether the point is in the United States (incl. Alaska, Hawaii, Puerto Rico): FEMA, NWI, NHD,
+   * SSURGO and 3DEP lidar cover only the US, and elsewhere they answer "nothing here", which must
+   * never be read as "checked and clear". Asks OpenStreetMap once per area; a rough box if it cannot.
+   */
+  async function inUS(lat, lon) {
+    const box = (lat >= 24.4 && lat <= 49 && lon >= -125 && lon <= -66.9)
+      || (lat >= 51 && lat <= 72 && lon >= -170 && lon <= -129.9) || (lat >= 18.8 && lat <= 22.4 && lon >= -160.6 && lon <= -154.7) || (lat >= 17.8 && lat <= 18.6 && lon >= -67.4 && lon <= -65.2);
+    return cachedJson('country', `${lat.toFixed(2)},${lon.toFixed(2)}`, async () => {
+      const r = await nominatim(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=5&lat=${lat}&lon=${lon}`);
+      return { code: r.address?.country_code || null };
+    }).then((c) => (c.code ? ['us', 'pr', 'vi', 'gu', 'as', 'mp'].includes(c.code) : box)).catch(() => box);
+  }
 
   /** Official USDA 2023 hardiness zone for US sites, via the ZIP code at the point. */
   async function usdaZone(lat, lon) {
@@ -190,11 +212,12 @@ export function makeSources(cacheDir) {
 
   async function climateData(lat, lon) {
     const key = `${lat.toFixed(2)},${lon.toFixed(2)}`;
-    return cachedJson('climate4', key, async () => {
+    return cachedJson('climate5', key, async () => {
       const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}` +
         '&start_date=2015-01-01&end_date=2024-12-31&daily=temperature_2m_min,temperature_2m_max,precipitation_sum&timezone=auto';
       const j = await retry(async () => {
         const r = await fetch(url, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(45000) });
+        if (r.status === 429) throw new Error('the free climate service is busy (429: too many sites loaded from this connection in the last hour). Open the project again in an hour and the climate fills in');
         if (!r.ok) throw new Error(`climate service answered ${r.status}`);
         return r.json();
       });
@@ -312,17 +335,19 @@ export function makeSources(cacheDir) {
     const patient = async (fn) => { let err; for (let k = 0; k < 4; k++) { try { return await fn(); } catch (e) { err = e; await new Promise((r) => setTimeout(r, 1500 * (k + 1))); } } throw err; };
     // osm2: the cached OpenStreetMap layer gained parking, woodland and path details
     const part = (name, fn) => cachedJson('surround-' + (name === 'osm' ? 'osm2' : name), key, fn).then((v) => [name, v, null]).catch((e) => [name, null, e.message]);
+    const us = await inUS(lat, lon);
+    const usOnly = (name, fn) => (us ? part(name, fn) : Promise.resolve([name, null, 'US only']));
     const parts = await Promise.all([
-      part('flood', async () => parseFlood(await patient(() => getJson(`https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query?outFields=FLD_ZONE,ZONE_SUBTY,SFHA_TF&maxAllowableOffset=0.00002&${envelope(bb)}`, {}, 60000)), lat, lon, size)),
-      part('wetlands', async () => parseWetlands(await patient(() => getJson(`https://fwspublicservices.wim.usgs.gov/wetlandsmapservice/rest/services/Wetlands/MapServer/0/query?outFields=WETLAND_TYPE,ATTRIBUTE&maxAllowableOffset=0.00002&${envelope(bb)}`)), lat, lon, size)),
-      part('streams', async () => parseStreams(await patient(() => getJson(`https://hydro.nationalmap.gov/arcgis/rest/services/nhd/MapServer/6/query?outFields=gnis_name,ftype,fcode&${envelope(bb)}`)), lat, lon, size)),
-      part('soils', () => soilMap(lat, lon, size, bb)),
+      usOnly('flood', async () => parseFlood(await patient(() => getJson(`https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query?outFields=FLD_ZONE,ZONE_SUBTY,SFHA_TF&maxAllowableOffset=0.00002&${envelope(bb)}`, {}, 60000)), lat, lon, size)),
+      usOnly('wetlands', async () => parseWetlands(await patient(() => getJson(`https://fwspublicservices.wim.usgs.gov/wetlandsmapservice/rest/services/Wetlands/MapServer/0/query?outFields=WETLAND_TYPE,ATTRIBUTE&maxAllowableOffset=0.00002&${envelope(bb)}`)), lat, lon, size)),
+      usOnly('streams', async () => parseStreams(await patient(() => getJson(`https://hydro.nationalmap.gov/arcgis/rest/services/nhd/MapServer/6/query?outFields=gnis_name,ftype,fcode&${envelope(bb)}`)), lat, lon, size)),
+      usOnly('soils', () => soilMap(lat, lon, size, bb)),
       part('osm', async () => parseOsm(await retry(() => getJson('https://overpass-api.de/api/interpreter', {
         method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: 'data=' + encodeURIComponent(`[out:json][timeout:25];(way["building"](${bb.south},${bb.west},${bb.north},${bb.east});way["highway"](${bb.south},${bb.west},${bb.north},${bb.east});way["waterway"](${bb.south},${bb.west},${bb.north},${bb.east});way["natural"="water"](${bb.south},${bb.west},${bb.north},${bb.east});nwr["amenity"="parking"](${bb.south},${bb.west},${bb.north},${bb.east});nwr["landuse"="forest"](${bb.south},${bb.west},${bb.north},${bb.east});nwr["natural"="wood"](${bb.south},${bb.west},${bb.north},${bb.east}););out geom;`),
       }, 40000)), lat, lon, size)),
     ]);
-    const out = { fetched: new Date().toISOString(), errors: {} };
+    const out = { fetched: new Date().toISOString(), errors: {}, usOnlyMissing: !us };
     for (const [name, v, err] of parts) { out[name] = v; if (err) out.errors[name] = err; }
     out.sources = {
       flood: 'FEMA National Flood Hazard Layer', wetlands: 'US Fish and Wildlife Service National Wetlands Inventory',
@@ -430,10 +455,16 @@ export function windRose(daily, lat) {
 export function parseCoordinates(q) {
   const s = String(q).trim();
   const at = s.match(/@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/);
-  const m = at || s.match(/^(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)$/);
+  // decimal commas, as typed in much of Europe and South America: "40,0150, -105,2705" or "40,0150; -105,2705"
+  const eu = s.match(/^(-?\d+,\d+)\s*[;,]?\s+(-?\d+,\d+)$/) || s.match(/^(-?\d+,\d+)\s*;\s*(-?\d+,\d+)$/);
+  const m = at || eu || s.match(/^(-?\d+(?:\.\d+)?)\s*[,;\s]\s*(-?\d+(?:\.\d+)?)$/);
   if (!m) return null;
-  const lat = Number(m[1]), lon = Number(m[2]);
-  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  const lat = Number(m[1].replace(',', '.')), lon = Number(m[2].replace(',', '.'));
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+    const e = new Error('Those look like coordinates, but latitude must be between -90 and 90 and longitude between -180 and 180. Type them as latitude, longitude.');
+    e.status = 400;
+    throw e;
+  }
   return [lat, lon];
 }
 

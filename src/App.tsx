@@ -7,7 +7,7 @@ import {
 import Toolbar, { ALL_TOOLS } from './components/Toolbar';
 import Permie from './components/Permie';
 import { PlantLibrary, YearCalendar, WaterBudget, DesignReview } from './components/Workspaces';
-import { effectiveZone, buildGuild, buildHedge, keylinePattern, sunSectors, applyActions, terrainBrief, centroid, reviewDesign, guildedShare, FixId, SECTOR_STYLE, bearing, FitFn, defaultHead, homeOf, settleActions } from './lib/permaculture';
+import { effectiveZone, buildGuild, buildHedge, keylinePattern, sunSectors, applyActions, terrainBrief, centroid, reviewDesign, guildedShare, FixId, SECTOR_STYLE, bearing, FitFn, defaultHead, homeOf, settleActions, weedHere } from './lib/permaculture';
 import { plantChecks, sitingChecks, surroundingsBrief } from './lib/checks';
 import { estimate, isHouse, PRICE_ITEMS } from './lib/estimate';
 import { seasonWatch, WatchItem } from './lib/season';
@@ -15,6 +15,8 @@ import { drawPlan } from './lib/planDrawing';
 import { toGeoJSON, toKML, toDXF, boundaryFromFile } from './lib/exportGeo';
 import { BriefSheet, BudgetSheet } from './components/Business';
 import { fetchSurroundings, fetchForecast, fetchProfile, askPermie, Profile } from './lib/api';
+import { setCurrency, money } from './lib/money';
+import { usesImperial } from './lib/siteLoader';
 import type { Brief } from './lib/types';
 import { designSummary } from './lib/summary';
 import { SPECIES, LAYER_NAMES, zoneFit } from './lib/plants';
@@ -158,7 +160,7 @@ export default function App() {
   const [panelOpen, setPanelOpen] = useState(false); // the side panel on a phone
   const [planImg, setPlanImg] = useState('');
   const boundaryInput = useRef<HTMLInputElement>(null);
-  useEffect(() => { fetchProfile().then(setProfile).catch(() => {}); }, [workspace]);
+  useEffect(() => { fetchProfile().then((p) => { setCurrency(p.currency); setProfile(p); }).catch(() => {}); }, [workspace]);
   useEffect(() => { fetch('/api/ai/status').then((r) => r.json()).then((j) => setAiAvailable(!!j.available)).catch(() => setAiAvailable(false)); }, []);
 
   const viewport = useRef<ViewportHandle>(null);
@@ -293,7 +295,8 @@ export default function App() {
   const loadSurroundings = useCallback(async (force = false) => {
     const s0 = project?.site;
     if (!s0 || s0.lat == null || reading) return;
-    if (s0.surroundings && !force && !Object.keys(s0.surroundings.errors || {}).length) return;
+    const realErrors = (x: { errors?: Record<string, string> } | null | undefined) => Object.values(x?.errors || {}).filter((e) => e !== 'US only').length;
+    if (s0.surroundings && !force && !realErrors(s0.surroundings)) return;
     setReading(true);
     try {
       const r = await fetchSurroundings(s0.lat, s0.lon!, s0.size);
@@ -303,7 +306,7 @@ export default function App() {
       setProject((p) => (p && p.id === project?.id ? { ...p, site: { ...p.site, surroundings: r } } : p));
       setDirty(true);
       // the federal map servers often time out once and answer the second time: try again by itself, once
-      if (Object.keys(r.errors || {}).length && retried.current !== project?.id) { retried.current = project?.id ?? null; window.setTimeout(() => setRetryTick((t) => t + 1), 15000); }
+      if (realErrors(r) && retried.current !== project?.id) { retried.current = project?.id ?? null; window.setTimeout(() => setRetryTick((t) => t + 1), 15000); }
     } catch (e: any) { say(`Could not load the public maps: ${e.message}`); }
     setReading(false);
   }, [project?.id, project?.site, reading]);
@@ -405,7 +408,7 @@ export default function App() {
   const placeObject = (type: ObjectType, x: number, y: number) => {
     if (!grid) return;
     const base: SiteObject = {
-      id: uid(), type, name: `${typeName(type)} ${countOf(type)}`, x, y, rotation: 0, scale: 1, planted: viewDay, status: 'proposed', phase: Math.min(3, phaseShown),
+      id: uid(), type, name: `${typeName(type)} ${countOf(type)}`, x, y, rotation: 0, scale: 1, planted: viewDay, status: 'proposed', phase: phaseShown < 3 ? phaseShown : 1,
       events: [{ id: uid(), date: viewDay, type: type === 'plant' ? 'planted' : 'built' }],
     };
     let patch: Partial<DesignState> = {};
@@ -451,7 +454,7 @@ export default function App() {
 
   const onStroke = (pts: [number, number][]) => {
     if (tool === 'hedge') {
-      const h = buildHedge(pts, siteZone, opts.hedgeTall || undefined, opts.hedgeLow || undefined, fit, presentIds);
+      const h = buildHedge(pts, siteZone, opts.hedgeTall || undefined, opts.hedgeLow || undefined, fit, presentIds, site);
       const added = plantsFrom(h.plants.slice(0, 300), 'hedgerow', objects);
       if (!added.length) { say('Draw a longer line for the hedgerow.'); return; }
       commit({ objects: [...objects, ...added] });
@@ -488,7 +491,7 @@ export default function App() {
       return;
     }
     if (tool === 'paddock') {
-      const f: Feature = { id: uid(), kind: 'paddock', name: `Paddock ${features.filter((x) => x.kind === 'paddock').length + 1}`, animal: opts.paddockAnimal, head: opts.paddockHead, points: clean, status: 'proposed', phase: Math.min(3, phaseShown) };
+      const f: Feature = { id: uid(), kind: 'paddock', name: `Paddock ${features.filter((x) => x.kind === 'paddock').length + 1}`, animal: opts.paddockAnimal, head: opts.paddockHead, points: clean, status: 'proposed', phase: phaseShown < 3 ? phaseShown : 1 };
       commit({ features: [...features, f] }); setZoneDraft([]); setSel({ kind: 'feature', id: f.id });
       return;
     }
@@ -660,7 +663,7 @@ export default function App() {
     }
     if (tool === 'measure') { setMeasure((m) => (m.length >= 2 ? [[x, y]] : [...m, [x, y]])); return; }
     if (tool === 'guild') {
-      const added = plantsFrom(buildGuild(opts.guildTree, x, y, siteZone, fit), 'guild', objects);
+      const added = plantsFrom(buildGuild(opts.guildTree, x, y, siteZone, fit, site), 'guild', objects);
       if (!added.length) return;
       commit({ objects: [...objects, ...added] });
       setSel({ kind: 'object', id: added[0].id });
@@ -887,7 +890,7 @@ export default function App() {
       title: project.name, address: site.address, client: project.brief?.client, designer: profile.designer, business: profile.business, contact: profile.contact,
       date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
       phaseLabel: phaseShown >= 3 ? 'The full design, years 1 to 3' : `The design as built by the end of year ${phaseShown}`,
-      note: 'Planning drawing from public data: confirm property lines with a survey, and utilities with 811 before digging.',
+      note: `Planning drawing from public data: confirm property lines with a survey, and utilities with ${usesImperial(site.address || '', site.climate) ? '811' : 'the local utility locator'} before digging.`,
     });
     return c.toDataURL('image/jpeg', 0.9);
   };
@@ -905,7 +908,11 @@ export default function App() {
     const sunSide = site.lat >= 0 ? 180 : 0;
     const out: Feature[] = [];
     for (const [key, d] of [['sun-summer', ss.summer], ['sun-winter', ss.winter]] as const) {
-      if (d.rise == null || d.set == null) continue;
+      if (d.rise == null || d.set == null) {
+        // above the Arctic or Antarctic circle: a day with no sunset (midnight sun) or no sunrise
+        if (d.noonAlt > 0) out.push({ id: uid(), kind: 'sector', sector: key, group: 'auto', spread: 359, name: `${SECTOR_STYLE[key].label}: midnight sun, it circles all day, ${Math.round(d.noonAlt)}° at noon`, points: [o, tip(sunSide, key === 'sun-summer' ? R : R * 0.75)] });
+        continue;
+      }
       const spread = site.lat >= 0 ? (d.set - d.rise + 360) % 360 : (d.rise - d.set + 360) % 360;
       out.push({ id: uid(), kind: 'sector', sector: key, group: 'auto', spread: Math.round(spread), name: `${SECTOR_STYLE[key].label}: rises ${Math.round(d.rise)}°, sets ${Math.round(d.set)}°, ${Math.round(d.noonAlt)}° at noon`, points: [o, tip(sunSide, key === 'sun-summer' ? R : R * 0.75)] });
     }
@@ -946,10 +953,10 @@ export default function App() {
       const sp = LIBRARY_BY_ID[t.species!];
       const r = Math.max(1.5, sp.spreadM / 2 + 0.5);
       if (!roles && plants.filter((p) => p !== t && Math.hypot(p.x - t.x, p.y - t.y) <= r).length >= 2) continue;
-      const members = buildGuild(sp.id, t.x, t.y, siteZone).filter((m) => m.role !== 'Centre' && (!roles || roles.includes(m.role)));
+      const members = buildGuild(sp.id, t.x, t.y, siteZone, fit, site).filter((m) => m.role !== 'Centre' && (!roles || roles.includes(m.role)));
       added = [...added, ...plantsFrom(members, 'added by the design review', [...objects, ...added])];
     }
-    if (!added.length) { say(trees.length ? 'Every tree already has its helpers.' : 'Plant a fruit or nut tree first, or use the guild tool.'); if (!trees.length) setTool('guild'); return; }
+    if (!added.length) { say(trees.length ? (guildedShare(objects) < 0.6 ? 'No support plants in the library suit this climate for these trees yet. Add helpers by hand from Plants.' : 'Every tree already has its helpers.') : 'Plant a fruit or nut tree first, or use the guild tool.'); if (!trees.length) setTool('guild'); return; }
     commit({ objects: [...objects, ...added] });
     say(`Added ${added.length} support plants around ${trees.length} tree${trees.length > 1 ? 's' : ''}. Undo takes them back.`);
   };
@@ -982,7 +989,7 @@ export default function App() {
       case 'read': setWorkspace(null); setTab('site'); loadSurroundings(true); return;
       case 'plants': setWorkspace('plants'); return;
       case 'misfits': {
-        const m = objects.find((o) => o.type === 'plant' && !zoneFit(LIBRARY_BY_ID[o.species || ''], siteZone).ok);
+        const m = objects.find((o) => o.type === 'plant' && LIBRARY_BY_ID[o.species || ''] && fit(o.species!) === 'no');
         if (m) { setWorkspace(null); setToolState('select'); setSel({ kind: 'object', id: m.id }); setTab('inspect'); }
         return;
       }
@@ -994,7 +1001,10 @@ export default function App() {
     if (!site || !grid || !stats) return {};
     const statusOf: Record<string, string> = {};
     if (siteClimate) for (const sp of SPECIES) { try { statusOf[sp.id] = advise(sp, siteClimate, null, sp.pz[0] ?? 2, site.soil).status; } catch { /* skip */ } }
-    else for (const sp of SPECIES) statusOf[sp.id] = zoneFit(sp, siteZone).ok ? 'good' : 'no';
+    // no climate data (the service was busy): say so, never call every plant "good"
+    else for (const sp of SPECIES) statusOf[sp.id] = siteZone == null ? 'not checked: climate data did not load' : zoneFit(sp, siteZone).ok ? 'zone fits, climate not checked' : 'no';
+    // a listed weed at this site may be used only with care, and never as a support plant
+    for (const sp of SPECIES) if (statusOf[sp.id] !== 'no' && weedHere(sp.id, site)) statusOf[sp.id] += ', caution: listed weed or invasive here, avoid';
     const sc = siteClimate;
     return {
       site: {
@@ -1028,17 +1038,26 @@ export default function App() {
   /** The rule checks on a proposal, as if it were added: only what the new things cause. */
   const checkActions = (actions: AiAction[]) => {
     if (!grid || !design || !site) return [];
-    const r = applyActions(design, grid, actions, actions.map((_, i) => i), { zone: siteZone, day: viewDay, id: uid, fit });
+    const r = applyActions(design, grid, actions, actions.map((_, i) => i), { zone: siteZone, day: viewDay, id: uid, fit, loc: site });
     const fresh = new Set([...r.state.objects.filter((o) => !design.objects.includes(o)).map((o) => o.id), ...r.state.features.filter((f) => !design.features.includes(f)).map((f) => f.id)]);
     const g2 = { heights: r.state.heights, n: grid.n, size: grid.size };
     const cs = [...plantChecks(r.state.objects, site), ...sitingChecks({ site, objects: r.state.objects, features: r.state.features, slopeAt: (x, y) => slopeAspectAt(g2, x, y).slope, wetAt })];
     return [...new Set(cs.filter((c) => c.ids.some((id) => fresh.has(id))).map((c) => localizeText(c.text, settings.units)))];
   };
+  /** The app's own cost and slope figures for a proposal, so the critic quotes them instead of guessing. */
+  const measureProposal = (actions: AiAction[]) => {
+    if (!grid || !design || !site || !stats) return '';
+    const r = applyActions(design, grid, actions, actions.map((_, i) => i), { zone: siteZone, day: viewDay, id: uid, fit, loc: site });
+    const e = estimate(r.state.objects, r.state.features, project?.prices || {}, stats.cutM3, stats.fillM3);
+    const budget = project?.brief?.budget;
+    const slopes = actions.map((a, i) => (a.x != null && a.y != null ? `#${i} ${a.label}: ${Math.round(slopeAspectAt(grid, a.x, a.y).slope)}%` : null)).filter(Boolean);
+    return `\n\nThe app's own figures for this proposal (quote these; do not estimate your own): cost by year ${e.phases.map((p) => money(p.total)).join(', ')}, total ${money(e.total)}${budget ? `, against the client's budget of ${money(budget)}` : ''}.${slopes.length ? ` Measured ground slope where each action sits: ${slopes.join('; ')}.` : ''}`;
+  };
   const settleAi = (actions: AiAction[]) => (grid && design && site ? settleActions(grid, site, design.features, design.objects, actions) : { actions, notes: [] });
   const onAiApply = (turnId: string, idx: number[]) => {
     const t = project?.ai?.find((x) => x.id === turnId);
     if (!t || !grid || !design) return;
-    const r = applyActions(design, grid, t.actions, idx, { zone: siteZone, day: viewDay, id: uid, fit });
+    const r = applyActions(design, grid, t.actions, idx, { zone: siteZone, day: viewDay, id: uid, fit, loc: site });
     commit(r.state);
     setProject((p) => (p ? { ...p, ai: (p.ai || []).map((x) => (x.id === turnId ? { ...x, applied: [...(x.applied || []), ...r.applied] } : x)) } : p));
     say(`Added ${r.applied.length} change${r.applied.length === 1 ? '' : 's'} from Permie.${r.notes.length ? ' ' + r.notes[0] : ''} One Undo takes them all back.`);
@@ -1273,7 +1292,7 @@ export default function App() {
           {permie && project && (
             <Permie key={permieStart ? JSON.stringify(permieStart) : 'permie'} available={aiAvailable} turns={project.ai || []} goals={project.goals || []} onGoals={(g) => { setProject((p) => (p ? { ...p, goals: g } : p)); setDirty(true); }}
               buildContext={buildAiContext} onTurn={onAiTurn} onApply={onAiApply} onPreview={setAiPreview} onClose={() => { setPermie(false); setAiPreview(null); setPermieStart(null); }}
-              onUpdateTurn={onAiUpdateTurn} checkActions={checkActions} settle={settleAi} start={permieStart} />
+              onUpdateTurn={onAiUpdateTurn} checkActions={checkActions} settle={settleAi} measure={measureProposal} start={permieStart} />
           )}
         </main>
 
@@ -1327,7 +1346,7 @@ export default function App() {
                                 <div className="text-[10px] uppercase tracking-[0.12em] text-amber-200/80 font-semibold">The review flags</div>
                                 {top.map((f, i) => (
                                   <div key={i} className="text-[11.5px] text-zinc-200 leading-snug">
-                                    {localizeText(f.text, settings.units).split('. ')[0]}.
+                                    {localizeText(f.text, settings.units).split('. ')[0].replace(/\.$/, '')}.
                                     {f.fix && <button onClick={() => onFix(f.fix!, f.ids)} className="ml-1 text-emerald-300 hover:text-emerald-200 font-semibold">{f.fixLabel || 'Fix it'}</button>}
                                   </div>
                                 ))}

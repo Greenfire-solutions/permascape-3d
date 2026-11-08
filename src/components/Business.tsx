@@ -7,7 +7,7 @@ import { askPermie, fetchProfile, saveProfile, Profile } from '../lib/api';
 import type { Units } from '../lib/units';
 
 export const GOALS = ['Food forest', 'Market garden', 'Self-reliant homestead', 'Water first', 'Wildlife and pollinators', 'Small backyard', 'Animals and pasture', 'Low maintenance', 'Fire-wise'];
-const money = (v: number) => `$${Math.round(v).toLocaleString()}`;
+import { money, currency, setCurrency } from '../lib/money';
 
 // ---------------------------------------------------------------- the client brief
 
@@ -60,7 +60,7 @@ export function BriefSheet({ brief, goals, onChange, onGoals, onClose, onDesign,
               {field('contact', 'Email or phone', 'sam@example.com')}
               {numField('people', 'People living there', '4')}
               {numField('hoursPerWeek', 'Hours a week for the land', '10')}
-              {numField('budget', 'Budget (US dollars)', '25000')}
+              {numField('budget', `Budget (${currency()})`, '25000')}
               {numField('years', 'Over how many years', '3')}
               <label className="block">
                 <span className="block text-[11px] uppercase tracking-[0.08em] text-zinc-400 font-semibold mb-1">Water today</span>
@@ -106,7 +106,7 @@ export function ProfileCard() {
   const [p, setP] = useState<Profile>({});
   const [saved, setSaved] = useState(false);
   useEffect(() => { fetchProfile().then(setP).catch(() => {}); }, []);
-  const set = (k: keyof Profile, v: string) => { setP({ ...p, [k]: v }); setSaved(false); };
+  const set = (k: keyof Profile, v: string) => { setP({ ...p, [k]: v }); setSaved(false); if (k === 'currency') setCurrency(v); };
   return (
     <section className="rounded-2xl border border-white/[0.07] bg-zinc-950/40 p-5 space-y-3" data-profile>
       <div className="flex items-center gap-2"><UserRound size={16} className="text-zinc-300" /><div className="font-display text-lg text-zinc-50">You, the designer</div></div>
@@ -114,6 +114,10 @@ export function ProfileCard() {
       {(['designer', 'business', 'contact', 'website'] as const).map((k) => (
         <input key={k} value={p[k] || ''} onChange={(e) => set(k, e.target.value)} placeholder={{ designer: 'Your name', business: 'Business name', contact: 'Email or phone', website: 'Website' }[k]} className={inputCls} data-profile-field={k} />
       ))}
+      <label className="flex items-center gap-2 text-xs text-zinc-400">Currency symbol for budgets
+        <input value={p.currency || ''} onChange={(e) => set('currency', e.target.value)} placeholder="$" maxLength={4} className={`${inputCls} w-20`} data-profile-field="currency" />
+        <span className="text-zinc-500">e.g. €, £, A$, R$. Set your local unit prices on the Budget page.</span>
+      </label>
       <Btn className="w-full" onClick={() => saveProfile(p).then(() => setSaved(true))}>{saved ? <><Check size={13} /> Saved</> : 'Save my details'}</Btn>
     </section>
   );
@@ -179,7 +183,7 @@ export function BudgetSheet({ objects, features, prices, onPrices, budget, years
                       <td className="px-5 py-1.5 text-zinc-500 w-28">{l.group}</td>
                       <td className="py-1.5"><button className="text-zinc-100 hover:text-emerald-200 text-left" onClick={() => l.ids[0] && onSelect(l.ids[0])}>{l.item}</button></td>
                       <td className="py-1.5 text-right tabular-nums text-zinc-300">{l.unit === 'each' ? l.qty.toLocaleString() : `${Math.round(qtyIn(l.qty, l.unit, units)).toLocaleString()} ${UNIT_LABEL(l.unit, units)}`}</td>
-                      <td className="py-1.5 text-right tabular-nums text-zinc-500 w-28">{l.unit === 'each' ? `${money(l.each)} each` : `$${priceIn(l.each, l.unit, units).toFixed(2)} / ${UNIT_LABEL(l.unit, units)}`}</td>
+                      <td className="py-1.5 text-right tabular-nums text-zinc-500 w-28">{l.unit === 'each' ? `${money(l.each)} each` : `${currency()}${priceIn(l.each, l.unit, units).toFixed(2)} /${UNIT_LABEL(l.unit, units)}`}</td>
                       <td className="py-1.5 text-right tabular-nums text-zinc-100 w-24">{money(l.total)}</td>
                       <td className="py-1.5 pr-4 pl-2 w-28 text-right">
                         {l.ids.length > 0 && <select value={ph} onChange={(e) => onPhase(l.ids, Number(e.target.value))} className="bg-zinc-950/70 border border-white/10 rounded-lg px-1.5 py-0.5 text-[11px] text-zinc-300" title="Move to another year">{[1, 2, 3].map((y) => <option key={y} value={y}>Year {y}</option>)}</select>}

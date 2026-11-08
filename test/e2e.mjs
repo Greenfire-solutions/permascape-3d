@@ -94,7 +94,7 @@ try {
   check('the place is found', !!(await until(`[...document.querySelectorAll('button')].some(b => b.textContent.includes('Build this site'))`)));
   await js(`(() => { const s = [...document.querySelectorAll('select')].find(s => [...s.options].some(o => o.value === '200')); const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; set.call(s, '200'); s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   await clickText('button', 'Build this site');
-  check('the site builds and opens', !!(await until(`window.__ps && window.__ps.project && window.__psView`, 90000)));
+  check('the site builds and opens', !!(await until(`!!(window.__ps && window.__ps.project && window.__psView)`, 90000)));
   const framesA = await js('window.__psView.frames()'); await sleep(3000);
   check('the 3D view is drawing frames', (await js('window.__psView.frames()')) > framesA);
   await clickSel('[data-tab=site]');

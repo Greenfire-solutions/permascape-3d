@@ -1,5 +1,5 @@
 // Plant library helpers. The data itself lives in library.ts.
-import { LIBRARY, LIBRARY_BY_ID } from './library.ts';
+import { LIBRARY, LIBRARY_BY_ID, hasWarmLimit } from './library.ts';
 import type { Species, Layer, Form, Category } from './library.ts';
 
 export type { Species, Layer, Form, Category };
@@ -34,6 +34,6 @@ export function leafState(sp: Species, nMonth: number): LeafState {
 export function zoneFit(sp: Species, zone: number | null | undefined) {
   if (zone == null) return { ok: true, text: '' };
   if (zone < sp.zoneMin) return { ok: false, text: `Too cold: needs zone ${sp.zoneMin} or warmer, site is ${zone}` };
-  if (zone > sp.zoneMax) return { ok: false, text: `Too warm: needs zone ${sp.zoneMax} or cooler, site is ${zone}` };
+  if (zone > sp.zoneMax && hasWarmLimit(sp)) return { ok: false, text: `Too warm: needs zone ${sp.zoneMax} or cooler, site is ${zone}` };
   return { ok: true, text: `Fits zone ${zone} (${sp.zoneMin} to ${sp.zoneMax})` };
 }

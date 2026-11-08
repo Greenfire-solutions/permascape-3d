@@ -57,7 +57,7 @@ const CRITIC_SCHEMA = {
 const BRIEF_FIELDS = {
   client: { type: 'string', description: 'Client name(s).' }, contact: { type: 'string', description: 'Email or phone.' },
   people: { type: 'integer', description: 'People living on the land.' }, hoursPerWeek: { type: 'number', description: 'Hours a week they can give the land.' },
-  budget: { type: 'number', description: 'Total budget in US dollars.' }, years: { type: 'integer', description: 'Over how many years.' },
+  budget: { type: 'number', description: 'Total budget as a plain number in the client\'s own currency (do not convert).' }, years: { type: 'integer', description: 'Over how many years.' },
   water: { type: 'string', enum: ['rain', 'well', 'mains', 'spring', 'creek'], description: 'Main water source today.' },
   animals: { type: 'string' }, keep: { type: 'string', description: 'Things to keep: trees, buildings, views.' },
   problems: { type: 'string', description: 'What is not working now.' }, access: { type: 'string', description: 'Mobility, age or access needs.' },
@@ -76,7 +76,7 @@ You are an experienced permaculture designer (PDC teacher level) who knows Molli
 
 Coordinates: metres from the site centre, x to the east, y to the north. The site is a square; stay at least 2 m inside its edge.
 Everything you add must suit the real land described below: put swales on slopes across the flow above what they water, ponds in low wet spots or below swales, zone 1 next to the house, frost-tender things off the frost pocket, windbreaks across the prevailing or cold wind, sun traps opening to the sun side of the sky for this hemisphere.
-Only use plant ids from the PLANT IDS list. Prefer plants marked "good". Never use an id that is not listed.
+Only use plant ids from the PLANT IDS list. Prefer plants marked "good". Never use an id that is not listed. Never use a plant marked "caution": it is a listed weed or invasive at this site. If plants are marked "not checked", the climate data did not load: tell the person, and choose only plants you are sure suit their location.
 Do not move or delete what is already placed; build around it and avoid overlapping existing objects (keep trees at least their spread apart).
 Write for a practical person, warm and direct. Never use an em dash or en dash; use commas and full stops.
 In everything the person reads, give sizes, amounts and temperatures in the units named in the context ("units"): for "US" that is feet, acres, gallons, inches and degrees F. Numbers in actions (x, y, size, width, depth) stay in metres and litres. Never write a placeholder in square brackets such as [name]; leave out what you do not know.
@@ -116,7 +116,7 @@ THE CLIENT'S NOTES:
 ${question}`;
   }
   if (mode === 'proposal') {
-    return `You write for a permaculture designer. Draft the cover letter for the design proposal below, addressed to the client, in the designer's voice: warm, plain and confident, no jargon without a one-line explanation, no hype. Never use an em dash or en dash. Use the units named in the context ("units") for every size, amount and temperature. Never write a placeholder in square brackets: if the designer's name is not given, end with the sign-off line alone.
+    return `You write for a permaculture designer. Draft the cover letter for the design proposal below, addressed to the client, in the designer's voice: warm, plain and confident, no jargon without a one-line explanation, no hype. Never use an em dash or en dash. Never suggest a plant marked "caution" in the plant list (a listed weed here). Use the cost figures in the context as they are; never invent a cost. Use the units named in the context ("units") for every size, amount and temperature. Never write a placeholder in square brackets: if the designer's name is not given, end with the sign-off line alone.
 Structure it as: a greeting; one paragraph on what you heard they want; a paragraph on what the land is telling us (slope, water, soil, climate, flood or stream limits); the big moves of the design and why each one suits this land; what happens in year 1, year 2 and year 3 and roughly what each costs (use the cost estimate in the context); what you need from them next; a sign-off with the designer's name if given. About 350 to 500 words.
 ${question ? `Notes from the designer: ${question}` : ''}
 
@@ -181,9 +181,9 @@ export async function askClaude({ mode, question, context, model, proposal }) {
     try { parsed = JSON.parse(out); } catch { throw new Error(friendly(out)); }
     if (parsed.is_error || parsed.subtype !== 'success') throw new Error(friendly(String(parsed.result ?? parsed.subtype ?? 'unknown error')));
     let data = parsed.structured_output;
-    if (data == null && typeof parsed.result === 'string') { const m = parsed.result.match(/\{[\s\S]*\}/); if (m) data = JSON.parse(m[0]); }
+    if (data == null && typeof parsed.result === 'string') { const m = parsed.result.match(/\{[\s\S]*\}/); if (m) { try { data = JSON.parse(m[0]); } catch { data = null; } } }
     if (!data || typeof data.answer !== 'string') throw new Error('Permie answered without the structured result. Try again.');
-    const result = { answer: scrubDashes(data.answer), actions: (Array.isArray(data.actions) ? data.actions : []).map((a) => ({ ...a, label: scrubDashes(a.label || ''), why: scrubDashes(a.why || '') })), seconds: Math.round((Date.now() - started) / 1000), costUsd: parsed.total_cost_usd ?? null };
+    const result = { answer: scrubDashes(data.answer), actions: (Array.isArray(data.actions) ? data.actions : []).filter(validAction).map((a) => ({ ...a, label: scrubDashes(a.label || ''), why: scrubDashes(a.why || '') })), seconds: Math.round((Date.now() - started) / 1000), costUsd: parsed.total_cost_usd ?? null };
     if (mode === 'critic') result.drop = (Array.isArray(data.drop) ? data.drop : []).filter((i) => Number.isInteger(i) && i >= 0 && i < (proposal || []).length);
     if (mode === 'brief') result.brief = Object.fromEntries(Object.entries(data.brief || {}).map(([k, v]) => [k, typeof v === 'string' ? scrubDashes(v) : v]));
     return result;
@@ -203,11 +203,23 @@ function cleanTranscripts(cwd) {
   } catch { /* nothing to clean */ }
 }
 
+const KINDS = new Set(ACTION.properties.kind.enum);
+const finite = (v) => v == null || (typeof v === 'number' && Number.isFinite(v));
+/** Only well formed changes reach the app: a known kind, numbers that are numbers, points that are pairs. */
+export function validAction(a) {
+  if (!a || typeof a !== 'object' || !KINDS.has(a.kind)) return false;
+  if (!['x', 'y', 'size', 'width', 'depth', 'zone', 'head', 'phase'].every((k) => finite(a[k]))) return false;
+  if (a.points != null && !(Array.isArray(a.points) && a.points.every((p) => Array.isArray(p) && p.length === 2 && p.every((v) => typeof v === 'number' && Number.isFinite(v))))) return false;
+  if (a.species != null && typeof a.species !== 'string') return false;
+  return true;
+}
+
 export const scrubDashes = (s) => String(s).replace(/\s*[—–]\s*/g, ', ').replace(/,\s*,/g, ',');
 
 function friendly(text) {
   const t = String(text || '').trim();
   if (/not logged in|login|authenticat|sign in/i.test(t)) return 'Claude Code is not signed in on this Mac. Open Terminal, type claude, sign in once, then try again.';
-  if (/rate|limit|quota|usage/i.test(t)) return 'Your Claude plan has hit its usage limit for now. Try again later.';
+  if (/rate.?limit|usage limit|quota|too many requests|\b429\b/i.test(t)) return 'Your Claude plan has hit its usage limit for now. Try again later.';
+  if (/^\s*[{[]/.test(t) || /JSON|position \d+|Cannot read properties/i.test(t)) return 'Permie answered in a form the app could not read. Try again.';
   return `Permie could not answer: ${t.slice(0, 200) || 'no reply'}`;
 }

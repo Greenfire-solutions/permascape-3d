@@ -23,7 +23,7 @@ interface Props {
   onProposal: (text: string) => void; onDraft?: () => Promise<void>; slopeAt?: (x: number, y: number) => number; wetAt?: (x: number, y: number) => boolean;
 }
 
-const money = (v: number) => `$${Math.round(v).toLocaleString()}`;
+import { money } from '../lib/money';
 
 export default function Report({ name, site, objects, features, stats, units, image, plan, onClose, sc, brief = {}, goals = [], prices = {}, water = {}, profile = {}, proposal = '', onProposal, onDraft, slopeAt, wetAt }: Props) {
   const d = useMemo(() => designSummary(site, objects, features), [site, objects, features]);
@@ -135,11 +135,11 @@ export default function Report({ name, site, objects, features, stats, units, im
         {ref && (<>
           <H>What the public maps show</H>
           <table className="text-sm"><tbody>
-            <Row k="Flood" v={!flood ? 'The FEMA flood map could not be loaded, so flooding was not checked.' : flood.onLabels.length ? `${flood.onLabels.join('; ')}. ${fmtArea(flood.areaM2, units)} of the site is in the mapped 1% a year flood area.` : `No part of the site is in a mapped 1% a year flood area.${flood.nearNames.length ? ` ${list(flood.nearNames)} ${flood.nearNames.length > 1 ? 'are' : 'is'} mapped just beyond the edge of the site.` : ''}`} />
-            <Row k="Wetlands" v={(ref.wetlands || []).length ? (ref.wetlands || []).map((w) => `${w.type} (${w.code})`).join('; ') : ref.wetlands && !ref.errors?.wetlands ? 'None mapped.' : 'The wetlands map could not be loaded, so wetlands were not checked.'} />
+            <Row k="Flood" v={ref.errors?.flood === 'US only' ? 'No national flood map is available here (the FEMA map covers the United States only), so flooding was not checked. Check the local flood map.' : !flood ? 'The FEMA flood map could not be loaded, so flooding was not checked.' : flood.onLabels.length ? `${flood.onLabels.join('; ')}. ${fmtArea(flood.areaM2, units)} of the site is in the mapped 1% a year flood area.` : `No part of the site is in a mapped 1% a year flood area.${flood.nearNames.length ? ` ${list(flood.nearNames)} ${flood.nearNames.length > 1 ? 'are' : 'is'} mapped just beyond the edge of the site.` : ''}`} />
+            <Row k="Wetlands" v={(ref.wetlands || []).length ? (ref.wetlands || []).map((w) => `${w.type} (${w.code})`).join('; ') : ref.wetlands && !ref.errors?.wetlands ? 'None mapped.' : ref.errors?.wetlands === 'US only' ? 'No national wetlands map is available here, so wetlands were not checked.' : 'The wetlands map could not be loaded, so wetlands were not checked.'} />
             <Row k="Streams" v={streamLines(site).length ? streamLines(site).map((x) => `${x.name}, ${fmtLen(polylineLength(x.line), units, 0)} on the site`).join('; ') : layerStatus(site).find((l) => l.key === 'streams')?.loaded ? 'None mapped on the site.' : 'The stream map could not be loaded, so streams were not checked.'} />
             <Row k="Roads and buildings" v={ref.osm && !ref.errors?.osm ? `${(ref.osm.roads || []).filter((r) => !FOOTWAYS.includes(r.kind)).length} road or driveway segments, ${(ref.osm.roads || []).filter((r) => FOOTWAYS.includes(r.kind)).length} footpath segments, ${(ref.osm.buildings || []).length} mapped buildings, ${(ref.osm.areas || []).filter((a) => a.kind === 'parking').length} parking lots, ${(ref.osm.areas || []).some((a) => a.kind === 'woodland') ? `${fmtArea((ref.osm.areas || []).filter((a) => a.kind === 'woodland').reduce((t, a) => t + polygonArea(a.ring), 0), units)} of mapped woodland` : 'no mapped woodland'}` : 'The OpenStreetMap layer could not be loaded, so roads, paths, parking and buildings were not checked.'} />
-            {(ref.soils == null || ref.errors?.soils) && <Row k="Soil map" v="The soil map could not be loaded, so soils were not checked." />}
+            {(ref.soils == null || ref.errors?.soils) && <Row k="Soil map" v={ref.errors?.soils === 'US only' ? 'The USDA soil map covers the United States only, so soil units were not mapped here.' : 'The soil map could not be loaded, so soils were not checked.'} />}
           </tbody></table>
           {(ref.soils || []).length > 0 && (
             <table className="w-full text-xs mt-3"><thead><tr className="text-left text-zinc-500 border-b border-zinc-200"><th className="py-1">Soil map unit</th><th>Share</th><th>Drainage</th><th>Floods</th><th>Runoff group</th><th>pH</th></tr></thead>
@@ -194,7 +194,7 @@ export default function Report({ name, site, objects, features, stats, units, im
 
         <H>Design review: {review.overall} of 100</H>
         <table className="text-sm"><tbody>
-          {review.areas.map((a) => <Row key={a.id} k={`${a.name} (${a.scored ? a.score : 'not scored'})`} v={T(a.findings.filter((f) => f.level !== 'good').map((f) => f.text).join(' ') || (a.scored ? 'All checks met.' : 'Nothing to judge yet.'))} />)}
+          {review.areas.map((a) => <Row key={a.id} k={`${a.name} (${a.scored ? a.score : 'not scored'}${a.notChecked ? `, ${a.notChecked} map${a.notChecked > 1 ? 's' : ''} not checked` : ''})`} v={T(a.findings.filter((f) => f.level !== 'good').map((f) => f.text).join(' ') || (a.scored ? 'All checks met.' : 'Nothing to judge yet.'))} />)}
         </tbody></table>
 
         {groupedPlants.length > 0 && (() => {
@@ -249,7 +249,7 @@ export default function Report({ name, site, objects, features, stats, units, im
           ))}</tbody></table>
         </>)}
 
-        <div className="text-[10px] text-zinc-400 mt-8">{profile.business ? `${profile.business}${profile.website ? ` · ${profile.website}` : ''}. ` : ''}Made with Permascape 3D. Imagery © Esri, Maxar, Earthstar Geographics. Elevation: USGS 3DEP or AWS Terrain Tiles. Places, roads and buildings © OpenStreetMap contributors. Climate: Open-Meteo. Soil: USDA NRCS SSURGO. Flood zones: FEMA National Flood Hazard Layer. Wetlands: US Fish and Wildlife Service. Streams: USGS National Hydrography Dataset. Planning aid only: confirm property lines with a survey and check local codes, permits and a site visit before digging.</div>
+        <div className="text-[10px] text-zinc-400 mt-8">{profile.business ? `${profile.business}${profile.website ? ` · ${profile.website}` : ''}. ` : ''}Made with Permascape 3D. Imagery © Esri, Maxar, Earthstar Geographics. Elevation: USGS 3DEP or AWS Terrain Tiles. Places, roads and buildings © OpenStreetMap contributors. Climate: Open-Meteo. {ref && !Object.values(ref.errors || {}).includes('US only') ? 'Soil: USDA NRCS SSURGO. Flood zones: FEMA National Flood Hazard Layer. Wetlands: US Fish and Wildlife Service. Streams: USGS National Hydrography Dataset. ' : ''}Planning aid only: confirm property lines with a survey and check local codes, permits and a site visit before digging.</div>
       </div>
     </div>
   );

@@ -111,7 +111,7 @@ async function api(req, res, url) {
     const file = path.join(DATA, 'profile.json');
     if (req.method === 'PUT') {
       const body = JSON.parse(await readBody(req, 64 * 1024));
-      const clean = Object.fromEntries(['designer', 'business', 'contact', 'website'].map((k) => [k, String(body[k] ?? '').slice(0, 200)]));
+      const clean = Object.fromEntries(['designer', 'business', 'contact', 'website', 'currency'].map((k) => [k, String(body[k] ?? '').slice(0, k === 'currency' ? 4 : 200)]));
       fs.writeFileSync(file, JSON.stringify(clean));
       return send(res, 200, clean);
     }

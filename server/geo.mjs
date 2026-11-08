@@ -170,7 +170,10 @@ export function summariseClimate(daily, lat) {
     monthlyMeanMinC: monthlyTmin.map((v, i) => +(v / Math.max(1, monthlyN[i])).toFixed(1)),
     monthlyMeanMaxC: monthlyTmax.map((v, i) => +(v / Math.max(1, monthlyN[i])).toFixed(1)),
     meanAnnualMinC: minMean == null ? null : +minMean.toFixed(1),
-    zone: minMean == null ? null : hardinessZone(minMean),
+    // ERA5 cells average out the coldest clear, still nights (frost hollows, uplands), so its yearly
+    // low runs a degree or two warm. Zone from a value 1.5 C colder, so tender plants are not
+    // promised a winter they will not get. The person can set their own zone in Site.
+    zone: minMean == null ? null : hardinessZone(minMean - 1.5),
     frostFree,
     lastSpringFrost: !frostFree && ls != null ? doyToLabel(unshift(Math.round(ls))) : null,
     firstFallFrost: !frostFree && ff != null ? doyToLabel(unshift(Math.round(ff))) : null,
@@ -204,22 +207,26 @@ function percentile(arr, p) {
 /** Per-year frost dates as day-of-year. Southern sites work in a half-year-shifted frame. */
 export function frostDates(daily, lat) {
   const south = lat < 0;
-  const shift = (doy) => (south ? ((doy + 182 - 1) % 365) + 1 : doy);
-  const unshift = (s) => (south ? ((s - 182 + 365 - 1) % 365) + 1 : s);
+  // A "season year" runs midsummer to midsummer (July 1 in the north, January 1 in the south), so
+  // one winter is never split in two. Within it the first frost is the earliest and the last frost
+  // the latest; mild places whose frosts all fall in January still get both dates.
+  const start = south ? 1 : 182;
+  const pos = (doy) => (doy - start + 365) % 365; // 0 at midsummer
+  const shift = (doy) => pos(doy);
+  const unshift = (p) => ((p + start - 1) % 365) + 1;
   const years = {};
   daily.time.forEach((d, i) => {
     const t = daily.temperature_2m_min[i];
     if (t == null) return;
-    // a southern "season year" runs July to June, so the winter is not split
     let y = Number(d.slice(0, 4));
     const doy = dayOfYear(d);
-    if (south && doy < 182) y -= 1;
-    (years[y] ||= { n: 0, last: null, first: null }).n++;
+    if (!south && doy < 182) y -= 1;
+    const Y = (years[y] ||= { n: 0, last: null, first: null });
+    Y.n++;
     if (t <= 0) {
       const s = shift(doy);
-      const Y = years[y];
-      if (s < 182) Y.last = Math.max(Y.last ?? 0, s);
-      else if (Y.first == null || s < Y.first) Y.first = s;
+      Y.last = Math.max(Y.last ?? -1, s);
+      Y.first = Math.min(Y.first ?? 999, s);
     }
   });
   const full = Object.values(years).filter((y) => y.n >= 360);
@@ -235,7 +242,7 @@ export function frostDates(daily, lat) {
     lastLate: r(percentile(lasts, 0.9)), // 9 years in 10 the last frost is before this
     firstMean: r(firsts.length ? firsts.reduce((a, b) => a + b, 0) / firsts.length : null),
     firstEarly: r(percentile(firsts, 0.1)), // 9 years in 10 the first frost is after this
-    seasonSafe: lasts.length && firsts.length ? Math.round(percentile(firsts, 0.1) - percentile(lasts, 0.9)) : null,
+    seasonSafe: lasts.length && firsts.length ? 365 - Math.round(percentile(lasts, 0.9) - percentile(firsts, 0.1)) : null,
   };
 }
 
@@ -289,7 +296,10 @@ export function koppen(T, P, lat) {
   else if (MAP < 10 * Pth) code = (MAP < 5 * Pth ? 'BW' : 'BS') + (MAT >= 18 ? 'h' : 'k');
   else if (Tcold >= 18) code = Pdry >= 60 ? 'Af' : Pdry >= 100 - MAP / 25 ? 'Am' : 'Aw';
   else {
-    const second = Psdry < 40 && Psdry < Pwwet / 3 ? 's' : Pwdry < Pswet / 10 ? 'w' : 'f';
+    // when both dry-season tests pass (Oaxaca: dry spring months in "summer", a dry winter),
+    // the season with less rain is the dry one (Peel et al.)
+    const sDry = Psdry < 40 && Psdry < Pwwet / 3, wDry = Pwdry < Pswet / 10;
+    const second = sDry && wDry ? (Pw > Ps ? 's' : 'w') : sDry ? 's' : wDry ? 'w' : 'f';
     const warm = T.filter((t) => t >= 10).length;
     const third = Thot >= 22 ? 'a' : warm >= 4 ? 'b' : Tcold < -38 ? 'd' : 'c';
     code = (Tcold > 0 ? 'C' : 'D') + second + (Tcold > 0 && third === 'd' ? 'c' : third);

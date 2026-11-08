@@ -24,10 +24,12 @@ interface Props {
   checkActions: (actions: AiAction[]) => string[];
   /** the app measures buildings and swales on the real terrain and moves any on steep ground */
   settle?: (actions: AiAction[]) => { actions: AiAction[]; notes: string[] };
+  /** the app's measured cost by year and ground slope under each action, as text for the critic */
+  measure?: (actions: AiAction[]) => string;
   start?: { mode: 'design' | 'ask'; question?: string; auto?: boolean } | null;
 }
 
-export default function Permie({ available, turns, goals, onGoals, buildContext, onTurn, onApply, onPreview, onClose, onUpdateTurn, checkActions, settle, start }: Props) {
+export default function Permie({ available, turns, goals, onGoals, buildContext, onTurn, onApply, onPreview, onClose, onUpdateTurn, checkActions, settle, measure, start }: Props) {
   const [mode, setMode] = useState<'design' | 'ask'>(start?.mode ?? (turns.length ? 'ask' : 'design'));
   const [text, setText] = useState(start?.question ?? '');
   const [compact, setCompact] = useState(false);
@@ -51,7 +53,8 @@ export default function Permie({ available, turns, goals, onGoals, buildContext,
     try {
       // the app's own measurements go in too: the critic sees a coarse terrain grid, the checks see every metre
       const found = turn.checks?.length ? `\n\nThe app measured this proposal on the real terrain and found these problems; fix each one (move it to gentler or safer ground, or drop it):\n- ${turn.checks.join('\n- ')}` : '';
-      const r = await askPermie({ mode: 'critic', question: q + found, context: buildContext(), proposal: turn.actions, model: deep ? 'opus' : 'sonnet' });
+      const figures = measure ? measure(turn.actions) : '';
+      const r = await askPermie({ mode: 'critic', question: q + found + figures, context: buildContext(), proposal: turn.actions, model: deep ? 'opus' : 'sonnet' });
       const drop = new Set(r.drop || []);
       const added = (r.actions || []) as AiAction[];
       const s = settle ? settle([...turn.actions.filter((_, i) => !drop.has(i)), ...added]) : null;

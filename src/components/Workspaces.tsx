@@ -287,7 +287,7 @@ export function DesignReview({ input, onClose, onFix }: { input: ReviewInput; on
             <div key={a.id} className="rounded-2xl border border-white/[0.07] bg-zinc-950/40 p-5" data-review-area={a.id}>
               <div className="flex items-center justify-between mb-3">
                 <div className="font-display text-lg text-zinc-50">{a.name}</div>
-                <div className="text-sm font-semibold tabular-nums" style={{ color: a.scored ? color(a.score) : '#a1a1aa' }} data-area-score={a.scored ? a.score : 'none'}>{a.scored ? a.score : 'not scored yet'}</div>
+                <div className="text-sm font-semibold tabular-nums" style={{ color: a.scored ? color(a.score) : '#a1a1aa' }} data-area-score={a.scored ? a.score : 'none'}>{a.scored ? a.score : 'not scored yet'}{a.notChecked ? <span className="ml-1.5 text-xs font-normal text-amber-300">{a.notChecked} map{a.notChecked > 1 ? 's' : ''} not checked</span> : null}</div>
               </div>
               <div className="space-y-2">
                 {a.findings.sort((x, y) => ({ warn: 0, tip: 1, good: 2 }[x.level] - { warn: 0, tip: 1, good: 2 }[y.level])).map((f, i) => (

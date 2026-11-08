@@ -7,6 +7,7 @@
 // So the dates come from the place, in either hemisphere, in the tropics as much as the north.
 import type { Climate, Soil } from './types';
 import type { Species } from './library.ts';
+import { hasWarmLimit } from './library.ts';
 
 // ---------------------------------------------------------------- the site's climate, ready to use
 
@@ -96,7 +97,7 @@ export function buildSiteClimate(c: Climate, lat: number, o: Overrides = {}): Si
   if (!c || c.version !== 2) return null;
   const notes: string[] = [];
   let zoneNum = c.zone ? c.zone.zone + (c.zone.label.endsWith('b') ? 0.5 : 0) : 7;
-  let zoneLabel = c.zone?.label ?? '?', zoneSource = 'Estimated from 10 years of ERA5 reanalysis';
+  let zoneLabel = c.zone?.label ?? '?', zoneSource = 'Estimated from 10 years of ERA5 reanalysis (10 km cells; frost hollows and uplands can be colder: set your own zone in Site if you know it)';
   if (c.zoneOfficial?.label) { zoneNum = zoneToNum(c.zoneOfficial.label); zoneLabel = c.zoneOfficial.label; zoneSource = c.zoneOfficial.source; }
   if (o.zone && Number.isFinite(zoneToNum(o.zone))) { zoneNum = zoneToNum(o.zone); zoneLabel = o.zone; zoneSource = 'Set by you'; }
 
@@ -106,6 +107,12 @@ export function buildSiteClimate(c: Climate, lat: number, o: Overrides = {}): Si
   const lo = o.lastFrost ? mmddToDoy(o.lastFrost) : null, fo = o.firstFrost ? mmddToDoy(o.firstFrost) : null;
   if (lo) { lastMean = lo; lastSafe = wrap(lo + 14); frostFree = false; }
   if (fo) { firstMean = fo; firstSafe = wrap(fo - 14); frostFree = false; }
+  // projects saved before 2026-11-08 can carry only one frost date (a mild winter whose frosts all
+  // fell after New Year). Frost still happens: estimate the missing side rather than call it frost free.
+  if (!frostFree && lastMean != null && firstMean == null) { firstMean = wrap(lastMean - 45); firstSafe = wrap(firstMean - 14); }
+  if (!frostFree && firstMean != null && lastMean == null) { lastMean = wrap(firstMean + 45); lastSafe = wrap(lastMean + 14); }
+  if (!frostFree && lastSafe == null && lastMean != null) lastSafe = wrap(lastMean + 14);
+  if (!frostFree && firstSafe == null && firstMean != null) firstSafe = wrap(firstMean - 14);
   if (!frostFree && (lastSafe == null || firstSafe == null)) frostFree = true;
   const frostFreeDays = frostFree ? 365 : ((firstSafe! - lastSafe! + 365) % 365);
 
@@ -212,7 +219,7 @@ function plantingWindows(sc: SiteClimate, sp: Species, days: number, o: SimOpts)
   const transplant = days === c.days && (c.method === 'transplant' || c.method === 'either');
   const trigger = c.daylengthBulb ? onionTrigger(sc.lat) : 0;
   // hot, wet tropical months (warm nights and heavy rain): disease and rot for temperate crops
-  const steamy = (d: number) => sc.lo(d) >= 23.5 && sc.rain(d) >= 120;
+  const steamy = (d: number) => sc.lo(d) >= 21 && sc.rain(d) >= 150;
   for (let p = 1; p <= 365; p++) {
     // transplants go out a little cooler than seed needs to germinate
     if (sc.mean(p) + warmAdj < c.plantMinC - (transplant ? 2 : 0)) continue;
@@ -250,13 +257,23 @@ function plantingWindows(sc: SiteClimate, sp: Species, days: number, o: SimOpts)
       for (let d = p + Math.round((mat - p) * 0.3); d <= mat; d += 3) { if (steamy(d)) wet++; m++; }
       if (m && wet / m > 0.4) continue;
     }
+    if (c.season === 'cool') {
+      // a cool crop grown through steady heat bolts, rots or never sizes up
+      let m = 0, k = 0;
+      for (let d = p; d <= mat; d += 3) { m += sc.mean(d) + warmAdj; k++; }
+      if (k && m / k > 24) continue;
+    }
     if (n) {
       if (hi / n > c.growMaxC) continue;
       if (c.setMinNightC != null && lo / n < c.setMinNightC) continue;
       if (c.nightMaxC != null && lo / n > c.nightMaxC) continue;
     }
     ok[p] = true;
-    for (let d = mat; d <= mat + c.harvestWeeks * 7; d++) ready[((d - 1) % 365) + 1] = true;
+    // the harvest ends at the first killing frost, however long the crop could keep giving
+    for (let d = mat; d <= mat + c.harvestWeeks * 7; d++) {
+      if (c.killC >= -1.5 ? !frostFreeOn(sc, d, o) : sc.lo(d) + warmAdj < c.killC + 2) break;
+      ready[((d - 1) % 365) + 1] = true;
+    }
   }
   return { plant: runs(ok), mature: runs(ready) };
 }
@@ -301,7 +318,9 @@ function annualAdvice(sp: Species, sc: SiteClimate, zc: ZoneConditions | null, p
     let sow: Range;
     if (sc.frostFree || sc.firstMean == null) {
       if (sp.id === 'winterwheat') { out.issues.push({ level: 'fail', text: 'Winter wheat needs a cold winter to form heads. Grow oats or barley in the cool season instead.' }); return; }
-      if (sc.coldestMeanC > 18) { out.issues.push({ level: 'fail', text: 'Never cool enough here. Use a warm-season cover such as sunn hemp or cowpea.' }); return; }
+      const coldestNight = Math.min(...Array.from({ length: 73 }, (_, i) => sc.lo(i * 5 + 1)));
+      // garlic needs cool nights to bulb: Pune's dry winter (nights near 15 C in the climate data) does it, Miami's 17 C nights do not
+      if (sp.id === 'garlic' ? sc.coldestMeanC > 24 || coldestNight > 16 : sc.coldestMeanC > 18) { out.issues.push({ level: 'fail', text: sp.category === 'cover' ? 'Never cool enough here. Use a warm-season cover such as sunn hemp or cowpea.' : `Never cool enough here for ${sp.name.toLowerCase()}: the coolest month averages ${Math.round(sc.coldestMeanC)} C.` }); return; }
       const coolest = [...Array(365)].map((_, i) => i + 1).reduce((b, d) => (sc.mean(d) < sc.mean(b) ? d : b), 1);
       sow = { start: wrap(coolest - 75), end: wrap(coolest - 40) };
       out.issues.push({ level: 'warn', text: 'Grown through your cool season rather than over a frozen winter.' });
@@ -312,7 +331,9 @@ function annualAdvice(sp: Species, sc: SiteClimate, zc: ZoneConditions | null, p
     }
     out.good.push(`Hardy to ${c.killC} C; your coldest nights average about ${Math.round(sc.extremeMinC)} C.`);
     out.calendar.push({ kind: 'sow', label: sp.id === 'garlic' ? 'Plant cloves' : 'Sow', ranges: [sow], text: `${c.depthCm} cm deep` });
-    out.calendar.push({ kind: 'harvest', label: sp.category === 'cover' ? 'Cut or turn in' : 'Harvest', ranges: [{ start: wrap(sow.start + c.days), end: wrap(sow.end + c.days + c.harvestWeeks * 7) }] });
+    // in mild winters garlic grows on through the cool season and is ready in about 170 days
+    const days = sp.id === 'garlic' && sc.extremeMinC > -7 ? 170 : c.days;
+    out.calendar.push({ kind: 'harvest', label: sp.category === 'cover' ? 'Cut or turn in' : 'Harvest', ranges: [{ start: wrap(sow.start + days), end: wrap(sow.end + days + c.harvestWeeks * 7) }] });
     return;
   }
 
@@ -324,7 +345,8 @@ function annualAdvice(sp: Species, sc: SiteClimate, zc: ZoneConditions | null, p
   let tw = trans ? plantingWindows(sc, sp, c.days, base) : none;
   let dw = direct ? plantingWindows(sc, sp, directDays, base) : none;
   let protectedOnly = false;
-  if (!tw.plant.length && !dw.plant.length) {
+  // protection only adds warmth: it is no help where the problem is heat or steamy wet months
+  if (!tw.plant.length && !dw.plant.length && (!sc.frostFree || sc.coldestMeanC < c.plantMinC)) {
     const prot: SimOpts = { protect: true, shift };
     tw = trans ? plantingWindows(sc, sp, c.days, prot) : none;
     dw = direct ? plantingWindows(sc, sp, directDays, prot) : none;
@@ -369,7 +391,10 @@ function perennialAdvice(sp: Species, sc: SiteClimate, zc: ZoneConditions | null
     if (inPot) out.issues.push({ level: 'warn', text: `Too cold outdoors (needs zone ${sp.zoneMin}+, here ${fmtZone(zone)}): keep it in a pot and bring it indoors for winter.` });
     else if (zone >= sp.zoneMin - 0.5) out.issues.push({ level: 'warn', text: `At the cold edge (needs zone ${sp.zoneMin}, here ${fmtZone(zone)}): only in the warmest, most sheltered spot, against a sunny wall.` });
     else { out.issues.push({ level: 'fail', text: `Too cold: survives to zone ${sp.zoneMin}, this spot is zone ${fmtZone(zone)}.` }); }
-  } else if (zone >= sp.zoneMax + 1) {
+  } else if (zone >= sp.zoneMax + 1 && hasWarmLimit(sp) && ((sp.chill && (sc.chill == null || sc.chill < sp.chill[0])) || sc.hottestMaxC > (sp.heatMaxC ?? 28) || (!sp.chill && sc.coldestMeanC > 19))) {
+    // past zoneMax, a plant fails for lack of winter chill or for summer heat. Where any chill it
+    // needs is met, summers stay mild and there is a cool season (oceanic Ireland, the Kenyan
+    // highlands), the zone number alone is no reason. Hot lowland tropics still rule them out.
     if (zone < sp.zoneMax + 1.5) out.issues.push({ level: 'warn', text: `At the warm edge of its range (zones ${sp.zoneMin} to ${sp.zoneMax}, here ${fmtZone(zone)}).` });
     else out.issues.push({ level: 'fail', text: `Too warm: it grows in zones ${sp.zoneMin} to ${sp.zoneMax} and needs real winters; this is zone ${fmtZone(zone)}.` });
   } else out.good.push(`Hardy here: zones ${sp.zoneMin} to ${sp.zoneMax}, this spot is ${fmtZone(zone)}.`);
@@ -413,7 +438,7 @@ function perennialCalendar(sp: Species, sc: SiteClimate, out: Advice) {
     plant = sp.category === 'pasture' && (sp.zoneMin >= 7)
       ? [{ start: wrap(sc.lastSafe! + 14), end: wrap(sc.lastSafe! + 60) }]
       : [{ start: wrap(sc.lastMean! - 14), end: wrap(sc.lastMean! + 30) }, { start: wrap(sc.firstMean! - 60), end: wrap(sc.firstMean! - 40) }];
-  } else if (sp.id === 'strawberry' && sc.zoneNum >= 9) {
+  } else if (sp.id === 'strawberry' && sc.zoneNum >= 9 && sc.hottestMaxC >= 30) {
     plant = [{ start: wrap(sc.firstMean! - 50), end: wrap(sc.firstMean! - 20) }];
     how += ', in autumn as a winter crop';
   } else if (!sp.deciduous || sp.zoneMin >= 8) {
@@ -429,7 +454,14 @@ function perennialCalendar(sp: Species, sc: SiteClimate, out: Advice) {
   }
   lines.push({ kind: 'plant', label: 'Plant', ranges: plant, text: how });
   if (sp.harvest.length) {
-    const months = sp.harvest.map(shiftMonth);
+    // harvest months are written for a mid-April last frost (mid-October in the south); a later
+    // spring (Fairbanks) moves the crop later, an earlier one moves it forward, up to two months
+    let late = 0;
+    if (!sc.frostFree && sc.lastMean != null) {
+      const days = sc.lat >= 0 ? sc.lastMean - 105 : ((sc.lastMean - 288 + 547) % 365) - 182;
+      late = Math.max(-2, Math.min(2, Math.round(days / 30)));
+    }
+    const months = sp.harvest.map((m) => ((shiftMonth(m) - 1 + late + 12) % 12) + 1);
     lines.push({ kind: 'harvest', label: 'Harvest', ranges: monthsToRanges(months), text: sp.firstHarvestYears ? `first crop after about ${sp.firstHarvestYears < 1 ? 'a few months' : `${sp.firstHarvestYears} year${sp.firstHarvestYears > 1 ? 's' : ''}`}` : undefined });
   }
   if (sp.prune.length) lines.push({ kind: 'note', label: 'Prune', ranges: monthsToRanges(sp.prune.map(shiftMonth)) });

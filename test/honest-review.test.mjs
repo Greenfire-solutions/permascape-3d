@@ -44,6 +44,7 @@ test('a map that did not load is "not checked", never "loaded and checked", and 
   assert.match(texts(a), /Not checked: the soil map did not load \(the service answered with error 502\)/);
   assert.ok(!/soils are loaded and checked|Checked against the soil map/i.test(texts(a)), texts(a));
   assert.equal(layerStatus(s).find((l) => l.key === 'soils').loaded, false);
+  assert.equal(a.notChecked, 1, 'the score says one map was not checked');
   // the score is the same as if the soil rule did not exist: the other maps still pass
   assert.ok(a.scored);
   const ok = review(site({ surroundings: loaded() }), [house, obj('tank', 8, 30)]);

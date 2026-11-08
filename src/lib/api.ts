@@ -59,7 +59,7 @@ export const today = () => {
 };
 
 /** Satellite image for the site, stitched from cached tiles and cropped to the exact square. */
-export async function fetchImagery(lat: number, lon: number, size: number, onProgress?: (f: number) => void): Promise<HTMLCanvasElement> {
+export async function fetchImagery(lat: number, lon: number, size: number, onProgress?: (f: number) => void, maxZoom = 19): Promise<HTMLCanvasElement> {
   const mLat = 111132.92 - 559.82 * Math.cos(2 * lat * Math.PI / 180);
   const mLon = 111412.84 * Math.cos(lat * Math.PI / 180) - 93.5 * Math.cos(3 * lat * Math.PI / 180);
   const north = lat + size / 2 / mLat, south = lat - size / 2 / mLat;
@@ -69,7 +69,7 @@ export async function fetchImagery(lat: number, lon: number, size: number, onPro
     return [((lo + 180) / 360) * sc, (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * sc];
   };
   // pick the zoom that gives roughly 2048 px across the site, capped at 19 (about 0.3 m)
-  let z = 19;
+  let z = maxZoom;
   while (z > 3) {
     const [x0] = px(west, lat, z), [x1] = px(east, lat, z);
     if (x1 - x0 <= 2600) break;
@@ -81,17 +81,19 @@ export async function fetchImagery(lat: number, lon: number, size: number, onPro
   mosaic.width = (tx1 - tx0 + 1) * 256; mosaic.height = (ty1 - ty0 + 1) * 256;
   const mctx = mosaic.getContext('2d')!;
   const total = (tx1 - tx0 + 1) * (ty1 - ty0 + 1);
-  let done = 0;
+  let done = 0, missing = 0;
   const jobs: Promise<void>[] = [];
   for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
     jobs.push(new Promise<void>((resolve) => {
       const img = new Image();
       img.onload = () => { mctx.drawImage(img, (tx - tx0) * 256, (ty - ty0) * 256); onProgress?.(++done / total); resolve(); };
-      img.onerror = () => { onProgress?.(++done / total); resolve(); };
-      img.src = `/api/tile/${z}/${tx}/${ty}`;
+      img.onerror = () => { missing++; onProgress?.(++done / total); resolve(); };
+      img.src = `/api/tile/${z}/${((tx % 2 ** z) + 2 ** z) % 2 ** z}/${ty}`; // wraps across the 180 degree line
     }));
   }
   await Promise.all(jobs);
+  // the closest zooms have no imagery in much of the world (outback, Kenya, Norway): step back
+  if (missing && z > 15) return fetchImagery(lat, lon, size, onProgress, z - 1);
   const out = document.createElement('canvas');
   out.width = out.height = 2048;
   out.getContext('2d')!.drawImage(mosaic, ax - tx0 * 256, ay - ty0 * 256, bx - ax, by - ay, 0, 0, 2048, 2048);
@@ -101,7 +103,7 @@ export async function fetchImagery(lat: number, lon: number, size: number, onPro
 export const fetchSurroundings = (lat: number, lon: number, size: number) => getJson<Surroundings>(`/api/surroundings?lat=${lat}&lon=${lon}&size=${size}`);
 export interface Forecast { days: { date: string; minC: number; maxC: number; rainMm: number; gustKmh: number }[]; alerts: { event: string; headline: string; ends: string }[]; source: string }
 export const fetchForecast = (lat: number, lon: number) => getJson<Forecast>(`/api/forecast?lat=${lat}&lon=${lon}`);
-export interface Profile { designer?: string; business?: string; contact?: string; website?: string }
+export interface Profile { designer?: string; business?: string; contact?: string; website?: string; currency?: string }
 export const fetchProfile = () => getJson<Profile>('/api/profile');
 export const saveProfile = (p: Profile) => getJson<Profile>('/api/profile', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(p) });
 

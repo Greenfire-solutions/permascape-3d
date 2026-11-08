@@ -21,6 +21,7 @@ import type { WatchItem } from '../lib/season';
 import { CloudLightning, Snowflake, Map as MapIcon2 } from 'lucide-react';
 import { Compass, Fence, PawPrint, Rows3, Trees, TreeDeciduous } from 'lucide-react';
 import type { Animal, SectorType } from '../lib/types';
+import { money, currency } from '../lib/money';
 
 export interface ToolOpts {
   brushSize: number; brushStrength: number; flattenHeight: number;
@@ -123,7 +124,7 @@ export function ToolPanel({ tool, o, set, water, setWater, units, site, grid, fi
   if (tool === 'guild') {
     const centres = SPECIES.filter((sp) => ['fruit-tree', 'nut-tree'].includes(sp.category) && sp.life === 'perennial').sort((a, b) => a.name.localeCompare(b.name));
     const c = SPECIES_BY_ID[o.guildTree];
-    const members = c ? guildSpecies(c, zone, fit) : [];
+    const members = c ? guildSpecies(c, zone, fit, site) : [];
     return (
       <SidebarPanel title="Tree guild" icon={TreeDeciduous}>
         <Field label="Centre tree">
@@ -146,7 +147,7 @@ export function ToolPanel({ tool, o, set, water, setWater, units, site, grid, fi
     );
   }
   if (tool === 'hedge') {
-    const auto = hedgeSpecies(zone, fit, present);
+    const auto = hedgeSpecies(zone, fit, present, site);
     const tallOpts = SPECIES.filter((sp) => sp.life === 'perennial' && sp.heightM >= 4).sort((a, b) => a.name.localeCompare(b.name));
     const lowOpts = SPECIES.filter((sp) => sp.life === 'perennial' && sp.layer === 'shrub').sort((a, b) => a.name.localeCompare(b.name));
     return (
@@ -168,7 +169,7 @@ export function ToolPanel({ tool, o, set, water, setWater, units, site, grid, fi
     );
   }
   if (tool === 'fence') return (
-    <SidebarPanel title="Fence" icon={Fence}><p className="text-xs text-zinc-400">Drag along the line. Posts are drawn every 2.5 m and the length shows when you select it, for ordering wire and posts.</p></SidebarPanel>
+    <SidebarPanel title="Fence" icon={Fence}><p className="text-xs text-zinc-400">Drag along the line. Posts are drawn every 2.5 m (8 ft) and the length shows when you select it, for ordering wire and posts.</p></SidebarPanel>
   );
   if (tool === 'keyline') return (
     <SidebarPanel title="Keyline pattern" icon={Rows3}>
@@ -350,7 +351,7 @@ export function ObjectPanel({ o, onChange, onDelete, onDuplicate, site, units, c
       {sp && (
         <>
           <Field label="Species">
-            <select value={o.species} onChange={(e) => onChange({ species: e.target.value })} className={inputCls}>
+            <select value={o.species} onChange={(e) => { const old = SPECIES.find((s) => s.id === o.species); const nu = SPECIES.find((s) => s.id === e.target.value); onChange({ species: e.target.value, ...(old && nu && new RegExp(`^${old.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}( \\d+)?$`).test(o.name) ? { name: o.name.replace(old.name, nu.name) } : {}) }); }} className={inputCls}>
               {SPECIES.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </Field>
@@ -406,7 +407,7 @@ export function ObjectPanel({ o, onChange, onDelete, onDuplicate, site, units, c
         <div className="grid grid-cols-2 gap-2" data-catchment>
           <Stat label="Drains to it" value={fmtArea(catchment.areaM2, units)} sub={`about ${fmtWater(catchment.runoffL, units)} of runoff a year`} />
           <Stat label="Spillway" value={`at least ${fmtLen(catchment.spillwayM, units, 0)} wide`} sub={catchment.fillsTimes >= 1 ? `the catchment fills it ${catchment.fillsTimes.toFixed(1)} times a year` : 'the catchment alone will not fill it: feed it from a swale'} />
-          <p className="col-span-2 text-[11px] text-zinc-500">Rule of thumb from the land above it and your rainfall, with a level spillway on solid ground beside the dam. Have an engineer size any dam wall over 6 ft (1.8 m), and check your state's dam rules.</p>
+          <p className="col-span-2 text-[11px] text-zinc-500">Rule of thumb from the land above it and your rainfall, with a level spillway on solid ground beside the dam. Have an engineer size any dam wall over 6 ft (1.8 m), and check the local dam and water rules.</p>
         </div>
       ))}
       {o.type === 'irrigation' && <Toggle id="flow" label="Emitting water" checked={o.isFlowing !== false} onChange={(v) => onChange({ isFlowing: v })} />}
@@ -469,7 +470,7 @@ export function FeaturePanel({ f, onChange, onDelete, units, onGuide, hasClimate
       {f.kind === 'zone' && (
         <>
           <Field label="Zone">
-            <select value={f.zone ?? 1} onChange={(e) => onChange({ zone: Number(e.target.value), color: undefined })} className={inputCls}>
+            <select value={f.zone ?? 1} onChange={(e) => { const z = Number(e.target.value); onChange({ zone: z, color: undefined, ...(f.name === ZONE_NAMES[f.zone ?? 1] || /^Zone \d/.test(f.name) ? { name: ZONE_NAMES[z] } : {}) }); }} className={inputCls}>
               {ZONE_NAMES.map((z, i) => <option key={i} value={i}>{z}</option>)}
             </select>
           </Field>
@@ -760,7 +761,7 @@ export function SummaryPanel({ site, objects, features, stats, units, onReport }
     <SidebarPanel title="Design summary" icon={BarChart3}>
       <div className="grid grid-cols-2 gap-2">
         <Stat label="Plants" value={d.plants} sub={d.zoneMisfits ? `${d.zoneMisfits} outside the zone` : 'all fit the zone'} />
-        <Stat label="Plant budget" value={`$${Math.round(d.plantCost).toLocaleString()}`} sub={d.otherCost ? `+ $${Math.round(d.otherCost).toLocaleString()} other` : ''} />
+        <Stat label="Plant budget" value={money(d.plantCost)} sub={d.otherCost ? `+ ${currency()}${Math.round(d.otherCost).toLocaleString()} other` : ''} />
         <Stat label="Rain on the site" value={W(d.rainOnSiteL)} sub="per year" />
         <Stat label="Roof catchment" value={W(d.roofCatchL)} sub={`${fmtArea(d.roofM2, units)} of roof`} />
         <Stat label="Water storage" value={fmtWater(d.storageL, units)} sub="tanks, ponds, swales" />
@@ -792,7 +793,9 @@ export function ExistingConditions({ site, units, reading, onLoad, onImportBuild
   site: Site; units: Units; reading: boolean; onLoad: () => void; onImportBuildings: () => void; onBoundary: () => void; hasBoundary: boolean; onSoilMap: () => void;
 }) {
   const r = site.surroundings;
-  const errs = r ? Object.keys(r.errors || {}) : [];
+  const errs = r ? Object.keys(r.errors || {}).filter((k) => r.errors![k] !== 'US only') : [];
+  const usOnly = !!r && Object.values(r.errors || {}).includes('US only');
+  const na = (k: string) => r?.errors?.[k] === 'US only';
   const flood = floodOnSite(site);
   const streams = r?.streams?.length ? r.streams : (r?.osm?.water || []).filter((w) => w.line);
   const NAMES: Record<string, string> = { flood: 'flood maps', wetlands: 'wetlands', streams: 'streams', soils: 'soil map', osm: 'roads, paths, parking and buildings' };
@@ -807,8 +810,8 @@ export function ExistingConditions({ site, units, reading, onLoad, onImportBuild
       ) : (
         <>
           <div className="grid grid-cols-2 gap-2">
-            <Stat label="Flood area" value={!flood ? 'Not loaded' : flood.onNames.length ? fmtArea(flood.areaM2, units) : 'None on the site'} sub={flood?.onNames.length ? flood.onNames.join(', ') : flood?.nearNames.length ? `${flood.nearNames.join(', ')} just beyond the edge` : 'FEMA'} />
-            <Stat label="Wetlands" value={(r.wetlands || []).length ? `${r.wetlands!.length} mapped` : r.wetlands && !r.errors?.wetlands ? 'None' : 'Not loaded'} sub={(r.wetlands || [])[0]?.type || 'USFWS inventory'} />
+            <Stat label="Flood area" value={na('flood') ? 'US only' : !flood ? 'Not loaded' : flood.onNames.length ? fmtArea(flood.areaM2, units) : 'None on the site'} sub={flood?.onNames.length ? flood.onNames.join(', ') : flood?.nearNames.length ? `${flood.nearNames.join(', ')} just beyond the edge` : 'FEMA'} />
+            <Stat label="Wetlands" value={(r.wetlands || []).length ? `${r.wetlands!.length} mapped` : r.wetlands && !r.errors?.wetlands ? 'None' : na('wetlands') ? 'US only' : 'Not loaded'} sub={(r.wetlands || [])[0]?.type || 'USFWS inventory'} />
             <Stat label="Streams" value={streams.length ? `${fmtLen(streams.reduce((t: number, x: any) => t + polylineLength(x.line), 0), units, 0)}` : r.streams != null || (r.osm && !r.errors?.osm) ? 'None mapped' : 'Not loaded'} sub={streams[0] ? ((streams[0] as any).name || (streams[0] as any).kind) : 'USGS hydrography'} />
             <Stat label="On the map" value={r.osm && !r.errors?.osm ? `${r.osm.buildings.length} buildings` : 'Not loaded'} sub={r.osm && !r.errors?.osm ? `${r.osm.roads.length} road and path segments, ${(r.osm.areas || []).filter((a) => a.kind === 'parking').length} parking lots` : 'OpenStreetMap'} />
           </div>
@@ -821,6 +824,7 @@ export function ExistingConditions({ site, units, reading, onLoad, onImportBuild
           )}
           {(r.osm?.buildings.length ?? 0) > 0 && <Btn className="w-full" onClick={onImportBuildings} data-import-buildings><Home size={13} /> Add the mapped buildings as existing</Btn>}
           {!hasBoundary && <Btn className="w-full" onClick={onBoundary}>Draw or import the property line</Btn>}
+          {usOnly && <div className="text-[11px] text-zinc-400" data-us-only>The flood, wetland and soil maps cover the United States only. Check your local government maps for flood and wetland areas before building near water.</div>}
           {errs.length > 0 && <div className="text-[11px] text-amber-300" data-layers-failed>Could not reach the {errs.map((e) => NAMES[e] || e).join(', ')} this time, so the design was not checked against {errs.length > 1 ? 'them' : 'it'}. <button className="underline" onClick={onLoad} disabled={reading}>{reading ? 'Trying...' : 'Try again'}</button></div>}
           <div className="text-[10px] text-zinc-600">FEMA, USFWS, USGS, USDA NRCS and OpenStreetMap. Read {new Date(r.fetched).toLocaleDateString()}. Public maps miss things: walk the land and call 811 before digging.</div>
         </>

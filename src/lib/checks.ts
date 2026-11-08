@@ -23,20 +23,42 @@ export const CONFLICTS: { host: string; hurts: string[]; withinM: number; text: 
   { host: 'koreanpine', hurts: ['currant', 'gooseberry'], withinM: 400, text: 'Currants and gooseberries host white pine blister rust, which also attacks Korean pine. Use rust-resistant currant varieties or plant them well apart.' },
 ];
 
-/** Plants that spread beyond where they are put, or are listed as invasive in parts of the US. */
-export const INVASIVE: Record<string, { level: 'warn' | 'tip'; text: string; west?: boolean }> = {
-  timberbamboo: { level: 'warn', text: 'Running bamboo spreads by underground runners and is listed invasive in several states. Only plant it inside a deep root barrier, or use clumping bamboo.' },
-  mulberry: { level: 'tip', text: 'White mulberry seeds into woods and is listed invasive in several states, where it crosses with native red mulberry. Choose red mulberry or a named fruiting variety, and keep birds from spreading seed into wild land.' },
-  peashrub: { level: 'tip', text: 'Siberian pea shrub naturalizes and is listed invasive in parts of the northern Plains and Canada. Keep it trimmed and away from prairie and woodland edges.' },
+// rough boxes for the regions where a plant is a listed weed (lat, lon in degrees)
+type Where = (lat: number, lon: number) => boolean;
+const box = (la0: number, la1: number, lo0: number, lo1: number): Where => (la, lo) => la >= la0 && la <= la1 && lo >= lo0 && lo <= lo1;
+const any = (...ws: Where[]): Where => (la, lo) => ws.some((w) => w(la, lo));
+const AUSTRALIA = box(-44, -10, 112, 154), NZ = box(-48, -34, 165, 179), S_AFRICA = box(-35, -22, 16, 33);
+const SOUTHERN_S_AMERICA = box(-56, -17, -76, -53), HAWAII = box(18, 23, -161, -154);
+const PACIFIC_ISLANDS: Where = (la, lo) => Math.abs(la) < 25 && (lo > 150 || lo < -140);
+const E_AFRICA = box(-12, 16, 30, 52), INDIA = box(6, 35, 68, 92);
+const US_CANADA = box(24, 60, -140, -52), PACIFIC_NW = box(37, 55, -130, -115);
+const AMERICAS: Where = (_la, lo) => lo < -30 && lo > -170;
+
+/**
+ * Plants that spread beyond where they are put. `where` limits a warning to the regions that list
+ * the plant as a weed; without a location those regional warnings are left out rather than guessed.
+ */
+export const INVASIVE: Record<string, { level: 'warn' | 'tip'; text: string; where?: Where }> = {
+  timberbamboo: { level: 'warn', text: 'Running bamboo spreads by underground runners and is listed invasive in many places. Only plant it inside a deep root barrier, or use clumping bamboo.' },
+  mulberry: { level: 'tip', text: 'White mulberry seeds into woods and is listed invasive here, where it crosses with native mulberries. Choose a named fruiting variety and keep birds from spreading seed into wild land.', where: any(US_CANADA, S_AFRICA) },
+  peashrub: { level: 'tip', text: 'Siberian pea shrub naturalizes and is listed invasive in parts of the northern Plains and Canada. Keep it trimmed and away from prairie and woodland edges.', where: box(40, 60, -125, -85) },
   seabuckthorn: { level: 'tip', text: 'Sea buckthorn suckers hard and forms thickets where it escapes. It also struggles with hot, humid summers and acid soil.' },
-  blacklocust: { level: 'tip', text: 'Black locust suckers widely and is invasive outside its native Appalachian and Ozark range, including much of the West and New England.', west: true },
-  alder: { level: 'tip', text: 'European black alder is listed invasive in parts of the Midwest and Northeast. A native alder does the same nitrogen work.' },
+  blacklocust: { level: 'tip', text: 'Black locust suckers widely and is invasive outside its native Appalachian and Ozark range, including much of Europe, the western US, Australia, New Zealand, South Africa and Chile. Check local rules before planting.', where: (la, lo) => !box(30, 41, -95, -75)(la, lo) },
+  alder: { level: 'tip', text: 'European black alder is listed invasive in parts of the Midwest and Northeast. A native alder does the same nitrogen work.', where: box(38, 60, -100, -50) },
   bermuda: { level: 'tip', text: 'Bermudagrass creeps into beds by runners and seed. Keep it out of zones 1 and 2.' },
   mint: { level: 'tip', text: 'Mint takes over a bed by runners. Grow it in a pot or a bed of its own.' },
   sunchoke: { level: 'tip', text: 'Sunchokes come back from every tuber left in the ground. Give them a corner they can have for good.' },
   horseradish: { level: 'tip', text: 'Horseradish regrows from any root piece. Plant it where it can stay.' },
   tagasaste: { level: 'tip', text: 'Tree lucerne is a broom and goes weedy in dry climates. Coppice it hard so it does not set seed.' },
-  taro: { level: 'tip', text: 'Wild taro chokes streams and is listed invasive in Florida and Texas waterways. Keep it away from creek banks.' },
+  taro: { level: 'tip', text: 'Wild taro chokes streams and is listed invasive in parts of the Americas and Australia. Keep it away from creek banks.', where: any(AMERICAS, AUSTRALIA) },
+  blackberry: { level: 'warn', text: 'Blackberry is a declared or listed weed here: birds carry the seed into bush, pasture and creek lines, where it forms thickets. Check local rules; many places ban selling or planting it.', where: any(AUSTRALIA, NZ, S_AFRICA, SOUTHERN_S_AMERICA, HAWAII, PACIFIC_NW) },
+  pricklypear: { level: 'warn', text: 'Prickly pear is a declared weed here and once overran millions of hectares. Check local rules before planting, and never let pads or fruit reach open land.', where: any(AUSTRALIA, S_AFRICA, E_AFRICA) },
+  mesquite: { level: 'warn', text: 'Mesquite is a declared weed here: it forms thorny thickets that take over grazing land and water points. Plant a local nitrogen-fixing tree instead.', where: any(AUSTRALIA, S_AFRICA, E_AFRICA, INDIA) },
+  willow: { level: 'warn', text: 'Willows are declared weeds along waterways here: they choke streams and spread from broken twigs. Use a local riparian tree instead.', where: any(AUSTRALIA, NZ, S_AFRICA) },
+  honeylocust: { level: 'warn', text: 'Honey locust is a declared weed here: thorny thickets along creeks and in pasture. If you must plant it, use a thornless, seedless variety.', where: any(AUSTRALIA, S_AFRICA) },
+  guava: { level: 'warn', text: 'Strawberry and common guava are among the worst invaders of island forests. Pick every fruit so birds and pigs do not spread the seed, or choose a local fruit tree.', where: any(HAWAII, PACIFIC_ISLANDS) },
+  tithonia: { level: 'tip', text: 'Tithonia seeds and spreads into roadsides and pasture and is listed as a weed here. Cut it before it sets seed and keep it inside the garden.', where: any(AUSTRALIA, S_AFRICA, PACIFIC_ISLANDS, HAWAII, E_AFRICA) },
+  douglasfir: { level: 'tip', text: 'Douglas fir spreads as a wilding conifer here, seeding into tussock and native bush. Plant it only where seedlings can be pulled each year.', where: any(NZ, SOUTHERN_S_AMERICA) },
 };
 
 /** Trees whose roots seek water and break drains and foundations. */
@@ -50,6 +72,8 @@ export function plantChecks(objects: SiteObject[], site?: Pick<Site, 'lat' | 'lo
   const sp = (o: SiteObject) => (o.type === 'garden' ? o.crop : o.species) || '';
   const out: Check[] = [];
   for (const c of CONFLICTS) {
+    // cedar-apple rust only occurs in North America
+    if (c.host === 'redcedar' && site?.lat != null && site?.lon != null && !(site.lat > 10 && site.lon < -50 && site.lon > -170)) continue;
     const hosts = plants.filter((o) => sp(o) === c.host);
     if (!hosts.length) continue;
     const victims = plants.filter((o) => c.hurts.includes(sp(o)) && hosts.some((h) => Math.hypot(h.x - o.x, h.y - o.y) <= c.withinM));
@@ -57,14 +81,12 @@ export function plantChecks(objects: SiteObject[], site?: Pick<Site, 'lat' | 'lo
     const kinds = [...new Set(victims.map(sp))].map(nameOf);
     out.push({ level: 'warn', area: 'plants', text: c.text.replace('{hurts}', list(kinds.map((k) => k.toLowerCase()))), ids: [...hosts.map((h) => h.id), ...victims.map((v) => v.id)] });
   }
-  const west = site?.lon != null && site.lon < -100;
-  const newEngland = site?.lat != null && site.lon != null && site.lat > 41 && site.lon > -75;
+  const located = site?.lat != null && site?.lon != null;
   const counted: Record<string, string[]> = {};
   for (const o of plants) { const id = sp(o); if (INVASIVE[id]) (counted[id] ||= []).push(o.id); }
   for (const [id, ids] of Object.entries(counted)) {
     const v = INVASIVE[id];
-    if (id === 'blacklocust' && !west && !newEngland) continue; // native range: fine
-    if (id === 'alder' && !(site?.lat != null && site.lat > 38 && site.lon != null && site.lon > -100)) continue; // listed in the Midwest and Northeast only
+    if (v.where && (!located || !v.where(site!.lat!, site!.lon!))) continue; // not a listed weed here
     out.push({ level: v.level, area: 'plants', text: `${ids.length} ${nameOf(id).toLowerCase()}: ${v.text}`, ids });
   }
   return out;
@@ -308,7 +330,7 @@ export function overlapChecks(d: Pick<SitingInput, 'site' | 'objects' | 'feature
       const onlyPaths = hard.every((h) => h.foot);
       out.push({ layer: 'osm', level: built || !onlyPaths ? 'warn' : 'tip', area: 'siting', ids: [o.id], text: `${o.name} is drawn on top of ${words(hard)}, which the map shows is already there. ${built ? 'Move it clear, or note in the plan that the existing surface or building comes out first.' : 'Move the bed, or reroute the path and note it in the plan.'}` });
     }
-    if (soft.length) out.push({ layer: 'osm', level: 'tip', area: 'siting', ids: [o.id], text: `${o.name} takes in ${fmtM2(soft.reduce((t, h) => t + h.m2, 0))} of ${words(soft)}. Trees would have to be cleared: check that is wanted, and whether the county needs a tree permit.` });
+    if (soft.length) out.push({ layer: 'osm', level: 'tip', area: 'siting', ids: [o.id], text: `${o.name} takes in ${fmtM2(soft.reduce((t, h) => t + h.m2, 0))} of ${words(soft)}. Trees would have to be cleared: check that is wanted, and whether a tree permit is needed.` });
   }
 
   for (const f of d.features.filter((f) => proposed(f) && f.points.length >= 3 && (f.kind === 'paddock' || (f.kind === 'zone' && (f.zone ?? 1) <= 3)))) {
@@ -334,10 +356,15 @@ export const LAYER_NAMES: Record<LayerKey, string> = {
 };
 
 /** For each public map: did it load, so a check against it means something? */
-export function layerStatus(site: Site): { key: LayerKey; name: string; loaded: boolean; error: string | null; note?: string }[] {
+export function layerStatus(site: Site): { key: LayerKey; name: string; loaded: boolean; error: string | null; note?: string; usOnly?: boolean }[] {
   const s = site.surroundings;
   return (Object.keys(LAYER_NAMES) as LayerKey[]).map((key) => {
     const error = s?.errors?.[key] || null;
+    // FEMA, NWI, NHD and SSURGO map the United States only: outside it they are not available, not failed
+    if (error === 'US only') {
+      if (key === 'streams' && s?.osm && !s.errors?.osm) return { key, name: LAYER_NAMES[key], loaded: true, error: null, note: 'outside the US there is no national stream map, so OpenStreetMap waterways stood in' };
+      return { key, name: LAYER_NAMES[key], loaded: false, error, usOnly: true };
+    }
     let loaded = !!s && s[key] != null && !error;
     let note: string | undefined;
     if (key === 'streams' && !loaded && s?.osm && !s.errors?.osm) { loaded = true; note = 'the national stream map did not load, so OpenStreetMap waterways stood in'; }
@@ -375,7 +402,7 @@ export function surroundingsBrief(site: Site) {
     roads: (s.osm?.roads || []).map((r) => ({ kind: r.kind, service: r.service || undefined, name: r.name, points: thin(r.line, 6) })),
     buildings: (s.osm?.buildings || []).map((b) => ({ kind: b.kind, centre: centre(b.ring), corners: b.ring.length > 10 ? undefined : b.ring.map((p) => p.map(Math.round)) })),
     parkingAndWoods: (s.osm?.areas || []).map((a) => ({ kind: a.kind, name: a.name, centre: centre(a.ring), corners: a.ring.length > 12 ? undefined : a.ring.map((p) => p.map(Math.round)) })),
-    notLoaded: layerStatus(site).filter((l) => !l.loaded).map((l) => `${l.name} did not load, so nothing was checked against it`),
+    notLoaded: layerStatus(site).filter((l) => !l.loaded).map((l) => (l.usOnly ? `${l.name} covers the United States only, so nothing was checked against it here` : `${l.name} did not load, so nothing was checked against it`)),
     soils: (s.soils || []).map((u) => ({ name: u.name, sharePct: Math.round(u.share * 100), drainage: u.drainage, flooding: u.flooding, pH: u.pH, centre: centre(u.rings[0] || []) })),
   };
 }
